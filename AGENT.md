@@ -50,3 +50,6 @@ Kullanıcı senden yeni bir özellik uygulamanı istediğinde:
 1. Bu değişikliğin Render Motorunda mı (React) yoksa AI Boru Hattında mı (Promptlar) olması gerektiğini doğrula.
 2. Hardcode (elle yazılmış sabit) React bileşenleri yazmak yerine, her zaman daha sağlam prompt'lar yazmaya öncelik ver.
 3. Mimariye dair köklü bir değişiklik yaparsan her zaman kodu belgelendir.
+
+## 📋 Devam Eden Görevler (TODO)
+Şu anda sistem üzerinde devam eden açık görevleri, eksikleri ve tasarımsal hedefleri görmek için lütfen kök dizindeki [TODO.md](./TODO.md) dosyasına göz at. Yeni bir kodlama görevine başlamadan önce mutlaka bu dosyayı referans al.
