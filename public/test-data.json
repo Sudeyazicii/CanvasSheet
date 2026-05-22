@@ -1,0 +1,7 @@
+[
+  {"id": 501, "konteyner_no": "MSCU-8821", "varis_limani": "Rotterdam", "yuk_tipi": "Dondurulmuş Gıda", "sicaklik_derecesi": -18.5, "tahmini_varis": "2024-05-20", "durum": "Denizde"},
+  {"id": 502, "konteyner_no": "CMA-9930", "varis_limani": "Singapur", "yuk_tipi": "Elektronik Aksan", "sicaklik_derecesi": 22.0, "tahmini_varis": "2024-05-25", "durum": "Liman Girişinde"},
+  {"id": 503, "konteyner_no": "MAERSK-112", "varis_limani": "Hamburg", "yuk_tipi": "İlaç ve Tıbbi Cihaz", "sicaklik_derecesi": 4.5, "tahmini_varis": "2024-05-18", "durum": "Yolda"},
+  {"id": 504, "konteyner_no": "HAPAG-774", "varis_limani": "Los Angeles", "yuk_tipi": "Otomobil Parçası", "sicaklik_derecesi": 25.0, "tahmini_varis": "2024-06-02", "durum": "Yükleme Aşamasında"},
+  {"id": 505, "konteyner_no": "EVER-551", "varis_limani": "Dubai", "yuk_tipi": "Tekstil ve Giyim", "sicaklik_derecesi": 28.5, "tahmini_varis": "2024-05-22", "durum": "Denizde"}
+]
