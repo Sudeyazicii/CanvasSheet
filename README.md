@@ -3,6 +3,8 @@
 # 🚀 Nokta Canvas (formerly Sheet Canvas)
 **AI-Powered Autonomous Dashboard Generation Engine**
 
+🏆 **Raise Summit Hackathon Başvuru Projesi!** 🏆
+
 [![React](https://img.shields.io/badge/React-18-blue.svg?style=flat&logo=react)](https://reactjs.org/)
 [![Vite](https://img.shields.io/badge/Vite-8.0-646CFF.svg?style=flat&logo=vite)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-CSS-38B2AC.svg?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
