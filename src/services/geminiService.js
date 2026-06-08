@@ -27,7 +27,7 @@ export async function generateDashboardConfig(metadataPrompt, userRequest, style
     console.log("🔍 [AI Engine] Kullanılabilir modeller taranıyor...");
     const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`;
     const listRes = await fetch(listUrl);
-    
+
     if (listRes.ok) {
       const listData = await listRes.json();
       if (listData.models && listData.models.length > 0) {
@@ -62,7 +62,7 @@ export async function generateDashboardConfig(metadataPrompt, userRequest, style
           const isV1 = apiVersion === 'v1';
           const requestBody = {
             contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\n\nREQUEST: ${userRequest}\n\nMETADATA:\n${metadataPrompt}\n\nRANDOM_SEED: ${Math.random()}\n\nReturn ONLY valid JSON.` }] }],
-            generationConfig: { 
+            generationConfig: {
               temperature: 0.7
             }
           };
@@ -156,11 +156,12 @@ ${JSON.stringify(layoutShell, null, 2)}
 INSTRUCTIONS:
 1. OPTIMIZE THE GRID: You MUST output exactly ${layoutShell.length} widgets. Use the GRID LAYOUT SHELL as a starting point, but you MUST OPTIMIZE the 'gridPosition' (colSpan, rowSpan). A full row is 12 columns. Give tables/charts colSpan 6 or 12. Give KPIs colSpan 3 or 4. NEVER use colSpan 1 or 2 (it makes the UI cramped and the user hates it).
 2. DATA VARIETY: You MUST use a wide variety of data points. DO NOT repeat the same metrics or {{tag}}s across multiple widgets. Each widget must analyze a completely different aspect of the USER ORIGINAL REQUEST.
-3. BIND REAL DATA: Replace the dummy wireframes from the concept with fully designed Tailwind HTML templates that bind the real data tags (e.g., {{tag}}) from the metadata. Ensure the design visually matches what the concept's 'Description' promised.
-4. PREMIUM DESIGN: Make the HTML templates ultra-luxurious with glassmorphism, gradients, padding (p-6), and dark mode aesthetics. Ensure text has enough breathing room.`;
+3. BUILD FROM SCRATCH (IGNORE DUMMY HTML): The concept you received contains complex dummy HTML wireframes (like '12,450' or fake bars). YOU MUST COMPLETELY DISCARD THAT HTML! Do NOT try to edit or parse it. You must write a BRAND NEW, fully functional Tailwind HTML string from scratch for every widget, binding the real {{tag}} variables.
+4. PREMIUM DESIGN: Make your new HTML templates ultra-luxurious with glassmorphism, gradients, padding (p-6), and dark mode aesthetics. Ensure text has enough breathing room.
+5. DYNAMIC ROW LABELS: NEVER hardcode text like 'Profit Margin' or 'Revenue' inside lists or tables as the row name. ALWAYS use the appropriate tag (e.g., {{kategori}} or {{column_0}}) so the real name of the item from the dataset is displayed next to its value.`;
 
   console.log("💎 [Gemini Refine] Taslak Gemini ile mükemmelleştiriliyor...");
-  
+
   try {
     // Gemini'nin en güçlü modelini (Pro) kullanmaya çalış
     const result = await generateDashboardConfig(metadataPrompt, refinedRequest, "LUXURY DATA BINDING PHASE");

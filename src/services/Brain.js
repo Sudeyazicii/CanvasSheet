@@ -24,7 +24,7 @@ Neşeli, zeki ve samimisin. Cevapların kısa (en fazla 2 cümle) ve motive edic
 
   async sendMessage(message, onSpeechEnd = null) {
     let text = "Üzgünüm, şu an vizyonuna bağlanmakta zorlanıyorum. Ama dashboard üzerinde çalışmaya devam ediyorum!";
-    
+
     try {
       const groq = getGroqClient();
       if (!groq) {

@@ -14,7 +14,13 @@ export default function SmartCanvas({ title, sheetData, config }) {
 
     // Basit Veri Yerleştirme (Data Injection)
     // {{COL_0}}, {{COL_1}}, {{TITLE}}, {{TOTAL_ROWS}} gibi placeholder'ları değiştirir
-    const headers = sheetData[0] || [];
+    const rawHeaders = sheetData[0] || [];
+    const headers = rawHeaders.map((h, i) => {
+      if (!h || h.toString().trim() === '') {
+        return i === 0 ? 'Kategori' : `Sutun_${i}`;
+      }
+      return h;
+    });
     const rows = sheetData.slice(1);
     
     // Değişkenleri tanımla

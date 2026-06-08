@@ -61,7 +61,7 @@ export async function generateDashboardConfig(metadataPrompt, userRequest, style
     } catch (e) {
       lastError = e.message;
       console.warn(`⚠️ [Groq] ${modelName} başarısız: ${lastError}`);
-      
+
       // If it's a rate limit error, maybe wait or just try next model
       if (lastError.includes('429')) {
         continue;
@@ -111,12 +111,12 @@ export async function generateMultipleDashboardConfigs(metadataPrompt, userReque
   - LAYOUT DIVERSITY: The gridPositions (colSpan, rowSpan, order) MUST BE COMPLETELY DIFFERENT across the 3 concepts. Concept 1 might have a huge top widget, Concept 2 might have side-by-side columns, Concept 3 might be a dynamic masonry layout.
   - VISUAL DIVERSITY: The HTML mockups inside \`config.htmlTemplate\` MUST visually reflect the different themes.
   - NO WIDGET TITLES: Do not include "title" inside the widget object. The visual should speak for itself.
-  - WIREFRAME HTML: For \`config.htmlTemplate\`, you MUST write CUSTOM Tailwind CSS HTML that VISUALLY MATCHES both the widget type AND the specific design theme of this concept!
-    - If your description mentions a TABLE, generate a dummy HTML table (empty rows/lines).
-    - If it's a BAR CHART, generate div bars of different heights.
-    - If it's a PIE CHART, generate a circular div with borders/gradients.
-    - If it's a KPI NUMBER, generate a large text skeleton.
-  - DO NOT COPY PASTE ONE EXAMPLE. Every concept must feel like it was designed by a different world-class designer.`;
+  - WIREFRAME HTML (ULTRA PREMIUM QUALITY): For \`config.htmlTemplate\`, you MUST write CUSTOM Tailwind CSS HTML that looks breathtakingly beautiful even without real data.
+    - ALWAYS use luxury container styles: \`bg-slate-900/80 backdrop-blur-2xl border border-white/5 rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.5)] transition-all duration-500 hover:border-blue-500/30\`.
+    - If it's a KPI/METRIC: Generate a sleek layout with a small neon icon, a glowing metric like \`<div class="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-600 mb-2">12,450</div>\`, and a subtle trend badge like \`<span class="text-green-400 bg-green-400/10 px-3 py-1 rounded-full text-sm">+14%</span>\`.
+    - If it's a BAR CHART: Generate beautiful vertical divs with glowing borders, e.g., \`<div class="w-12 h-32 bg-gradient-to-t from-blue-600 to-cyan-400 rounded-t-xl shadow-[0_0_15px_rgba(56,189,248,0.4)]"></div>\`.
+    - If it's a LIST/TABLE: Create elegant rows with \`border-b border-white/5 pb-4 mb-4\`, dummy luxury names like "Enterprise License", and dummy values.
+  - DO NOT COPY PASTE ONE EXAMPLE. Every concept must feel like a completely unique, high-end SaaS product designed by Apple or Stripe.`;
 
   if (!GROQ_API_KEY) throw new Error('VITE_GROQ_API_KEY tanımlı değil');
 

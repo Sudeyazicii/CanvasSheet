@@ -7,7 +7,13 @@ export async function analyzeSheet(data, sourceName = 'Data Source') {
       throw new Error('Veri bulunamadı.');
     }
 
-    const headers = data[0];
+    const rawHeaders = data[0] || [];
+    const headers = rawHeaders.map((h, i) => {
+      if (!h || h.toString().trim() === '') {
+        return i === 0 ? 'Kategori' : `Sutun_${i}`;
+      }
+      return h;
+    });
     const allRows = data.slice(1);
 
     // Boş satırları filtrele

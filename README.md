@@ -1,7 +1,6 @@
 <div align="center">
 
-# 🚀 Nokta Canvas (formerly Sheet Canvas)
-**AI-Powered Autonomous Dashboard Generation Engine**
+# 🚀 Sheet Canvas Projesi
 
 🏆 **Raise Summit Hackathon Başvuru Projesi!** 🏆
 

@@ -22,12 +22,12 @@ export default function AnalyzePage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isLocked, setIsLocked] = useState(false);
   const [expertRequested, setExpertRequested] = useState(false);
-  const [expertStep, setExpertStep] = useState('none'); 
+  const [expertStep, setExpertStep] = useState('none');
   const [error, setError] = useState(null);
-  const [step, setStep] = useState('idle'); 
+  const [step, setStep] = useState('idle');
   const [prompt, setPrompt] = useState('');
   const [refining, setRefining] = useState(false);
-  
+
   const [mascotChat, setMascotChat] = useState("Selam! Ben NOVA. Verilerini en üst düzey tasarım standartlarında analiz ettim ve senin için 3 farklı PREMİUM konsept hazırladım. Hangisi senin vizyonuna daha yakın?");
   const [refinementInput, setRefinementInput] = useState('');
 
@@ -84,24 +84,24 @@ export default function AnalyzePage() {
     setGenerating(true);
     setError(null);
     setStep('generating');
-    
+
     // TOKEN TASARRUFU: Yapay zekaya verinin tamamını değil, sadece şemasını gönderiyoruz.
     const schemaOnly = {
       sheetName: metadata.sheetName,
       headers: metadata.headers,
       primaryMeasure: metadata.primaryMeasure,
       // Veri satırlarını siliyoruz, AI sadece iskeleti kuracak
-      rows: [] 
+      rows: []
     };
 
     try {
       // HİBRİT AŞAMA 1: Groq/Llama ile 3 STRATEJİK TASLAK üret
       console.log("⚡ [Hybrid Engine] Groq ile stratejik konseptler üretiliyor...");
       const configs = await generateMultipleDashboardConfigs(
-        JSON.stringify(schemaOnly), 
+        JSON.stringify(schemaOnly),
         prompt || "Verilerime uygun lüks bir dashboard tasarla."
       );
-      
+
       // Her konsept için açıklama ve başlıkları set et
       setUiConfigs(configs);
       setSelectedIndex(0);
@@ -124,11 +124,11 @@ export default function AnalyzePage() {
       // HİBRİT AŞAMA 2: Seçilen tasarımı Gemini ile PARLAT ve GERÇEK VERİ ekle
       console.log("💎 [Hybrid Engine] Seçilen tasarım Gemini ile mükemmelleştiriliyor...");
       const selectedLayout = uiConfigs[index];
-      
+
       // Bu sefer Gemini'ye GERÇEK VERİYİ ve KESİN ETİKET LİSTESİNİ gönderiyoruz
       const metadataPrompt = formatMetadataForPrompt(metadata);
       const finalConfig = await refineDashboardWithGemini(selectedLayout, metadataPrompt, prompt);
-      
+
       setActiveDashboard(finalConfig);
       setIsLocked(true);
     } catch (err) {
@@ -143,25 +143,25 @@ export default function AnalyzePage() {
   const handleRefine = async (e) => {
     e.preventDefault();
     if (!refinementInput.trim() || refining) return;
-    
+
     const instruction = refinementInput;
     setRefinementInput('');
     setRefining(true);
-    
+
     try {
       const response = await Brain.sendMessage(`Kullanıcı mevcut dashboard (Seçenek ${selectedIndex + 1}) üzerinde şu değişikliği istiyor: ${instruction}. Ona bu tasarım değişikliğini hemen hayata geçireceğini söyle.`);
       setMascotChat(response);
-      
+
       const metadataPrompt = formatMetadataForPrompt(metadata);
       const currentConfig = activeDashboard || uiConfigs[selectedIndex];
-      
+
       const refinedConfig = await generateDashboardConfig(
-        metadataPrompt, 
+        metadataPrompt,
         `MEVCUT TASARIM: ${currentConfig.title}. 
          KRİTİK TALİMAT: ${instruction}. 
          GÖREV: Bu tasarımı yukarıdaki talimata göre GÜNCELLE. SADECE JSON döndür.`
       );
-      
+
       setActiveDashboard(refinedConfig);
       setMascotChat(`İşte istediğin güncellemeleri yaptım! Başka bir değişiklik istersen buradayım.`);
     } catch (err) {
@@ -178,7 +178,7 @@ export default function AnalyzePage() {
     return (
       <div className="min-h-screen bg-[#0F172A] text-slate-100 pb-20 overflow-x-hidden">
         <div className="max-w-[1600px] mx-auto px-6 pt-12 animate-fadeIn">
-          
+
           {!isLocked ? (
             <div className="space-y-12">
               <div className="text-center space-y-4">
@@ -195,17 +195,17 @@ export default function AnalyzePage() {
                         {/* Wireframe Mockup Visual */}
                         <div className="absolute inset-0 overflow-hidden rounded-[40px] opacity-30 group-hover:opacity-80 transition-all duration-700 pointer-events-none">
                           <div className="w-[300%] h-[300%] transform scale-[0.333] origin-top-left p-8">
-                            <DynamicDashboard 
-                              uiConfig={layout} 
-                              spreadsheetId={spreadsheetId} 
-                              mockMode={true} 
+                            <DynamicDashboard
+                              uiConfig={layout}
+                              spreadsheetId={spreadsheetId}
+                              mockMode={true}
                               metadata={metadata}
                             />
                           </div>
                         </div>
 
                         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-slate-950/40 backdrop-blur-md">
-                          <button 
+                          <button
                             onClick={() => handleSelect(idx)}
                             disabled={refining}
                             className="px-10 py-5 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-3xl transition-all shadow-2xl shadow-blue-600/40 uppercase tracking-widest text-xs flex items-center gap-3"
@@ -247,13 +247,13 @@ export default function AnalyzePage() {
                   </div>
 
                   <div className="flex items-center gap-4">
-                    <button 
+                    <button
                       onClick={() => setIsLocked(false)}
                       className="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold flex items-center gap-2 transition-all text-slate-400"
                     >
                       <Layout size={14} /> Tasarımı Değiştir
                     </button>
-                    <button 
+                    <button
                       onClick={handleExportJSON}
                       className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20"
                     >
@@ -270,10 +270,10 @@ export default function AnalyzePage() {
                     </div>
                   )}
                   {activeDashboard && (
-                    <DynamicDashboard 
-                      uiConfig={activeDashboard} 
-                      spreadsheetId={spreadsheetId} 
-                      mockMode={false} 
+                    <DynamicDashboard
+                      uiConfig={activeDashboard}
+                      spreadsheetId={spreadsheetId}
+                      mockMode={false}
                       metadata={metadata}
                     />
                   )}
@@ -296,7 +296,7 @@ export default function AnalyzePage() {
                   </div>
 
                   {!expertRequested ? (
-                    <button 
+                    <button
                       onClick={handleDelegateExpert}
                       className="w-full mb-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 shadow-xl shadow-blue-600/30 group"
                     >
@@ -316,8 +316,8 @@ export default function AnalyzePage() {
                   </div>
 
                   <form onSubmit={handleRefine} className="flex gap-2">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={refinementInput}
                       onChange={(e) => setRefinementInput(e.target.value)}
                       placeholder="Hızlı revize iste..."
