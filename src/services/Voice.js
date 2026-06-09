@@ -26,15 +26,15 @@ class NoktaVoice {
 
     const voices = speechSynthesis.getVoices();
     // Try to find a male voice if possible
-    let trVoice = voices.find(v => v.lang.startsWith('tr') && 
-      (v.name.toLowerCase().includes('male') || 
-       v.name.toLowerCase().includes('cem') || 
-       v.name.toLowerCase().includes('tolga') || 
-       v.name.toLowerCase().includes('erkek')));
-    
+    let trVoice = voices.find(v => v.lang.startsWith('tr') &&
+      (v.name.toLowerCase().includes('male') ||
+        v.name.toLowerCase().includes('cem') ||
+        v.name.toLowerCase().includes('tolga') ||
+        v.name.toLowerCase().includes('erkek')));
+
     // Fallback to any TR voice
     if (!trVoice) trVoice = voices.find(v => v.lang.startsWith('tr'));
-    
+
     if (trVoice) utter.voice = trVoice;
 
     utter.onstart = () => {

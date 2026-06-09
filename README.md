@@ -9,7 +9,7 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-CSS-38B2AC.svg?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
 [![Gemini & Groq API](https://img.shields.io/badge/AI-Hybrid_Engine-orange.svg?style=flat&logo=google)](https://deepmind.google/technologies/gemini/)
 
-Nokta Canvas, Google Sheets veya lokal verilerinizi saniyeler içinde büyüleyici, modern ve interaktif dashboard'lara dönüştüren, yapay zeka destekli otonom bir görselleştirme motorudur. Hiçbir backend ihtiyacı duymadan, tamamen tarayıcı üzerinden çalışan **Groq + Gemini Hibrit AI Mimarisi** ile çalışır.
+Canvas Sheet, Google Sheets veya lokal verilerinizi saniyeler içinde büyüleyici, modern ve interaktif dashboard'lara dönüştüren, yapay zeka destekli otonom bir görselleştirme motorudur. Hiçbir backend ihtiyacı duymadan, tamamen tarayıcı üzerinden çalışan **Groq + Gemini Hibrit AI Mimarisi** ile çalışır.
 
 <br />
 
@@ -17,7 +17,7 @@ Nokta Canvas, Google Sheets veya lokal verilerinizi saniyeler içinde büyüleyi
 
 <br />
 
-**🎥 Nokta Canvas MVP Demo İzle:** [https://www.youtube.com/watch?v=XdQJRQ1bfrY](https://www.youtube.com/watch?v=XdQJRQ1bfrY)
+**🎥 Canvas Sheet MVP Demo İzle:** [https://www.youtube.com/watch?v=XdQJRQ1bfrY](https://www.youtube.com/watch?v=XdQJRQ1bfrY)
 
 </div>
 
@@ -86,5 +86,14 @@ npm run dev
 3. **Faz 1 (Görsel Strateji)**: Groq (LLaMA) çok hızlı bir şekilde isteğinize cevap veren 3 tamamen farklı **tasarım iskeleti** üretir.
 4. **Faz 2 (Veri ve Refinement)**: Siz birini seçtiğinizde, Gemini o iskeleti alır, hücreleri ve genişlikleri optimize eder ve tablonuzdaki gerçek verilerle doldurarak interaktif bir Tailwind dashboard'u olarak ekrana basar.
 
+## 📚 Proje Dokümantasyonu
+
+Projenin gelişim sürecini, yol haritasını ve mimarisini detaylı incelemek için aşağıdaki dosyalara göz atabilirsiniz:
+- [Walkthrough (Sistem İşleyişi)](./walkthrough.md)
+- [Proje Planı](./plan.md)
+- [Gelecek Çalışmalar (TODO)](./future_work/todo.md)
+- [Değişiklik Geçmişi (Changelog)](./changelog.md)
+- [Fikir ve Teknik Belgeler](./doc/)
+
 ## 🤝 Kodlama Ajanları İçin
-Yapay zeka asistanları veya otonom kodlama ajanları ile bu repoya katkıda bulunuyorsanız, projenin kuralları ve sistem mimarisi için lütfen kök dizindeki `AGENT.md` dosyasını okuyun.
+Yapay zeka asistanları veya otonom kodlama ajanları ile bu repoya katkıda bulunuyorsanız, projenin kuralları ve sistem mimarisi için lütfen kök dizindeki `agents.md` dosyasını okuyun.

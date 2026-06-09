@@ -1,11 +1,11 @@
 # 🤖 Kodlama Ajanları İçin Sistem Mimarisi ve Yönergeler (AGENT.md)
 
 Hoş geldin Otonom Ajan / Yapay Zeka Asistanı.
-Bu belge, **Nokta Canvas** (eski adıyla Sheet Canvas) projesinin çekirdek mimarisini, kurallarını ve mantık döngülerini özetlemektedir. 
+Bu belge, **Canvas Sheet** projesinin çekirdek mimarisini, kurallarını ve mantık döngülerini özetlemektedir. 
 Bu repodaki kodları değiştirmeden önce lütfen bu manifestoyu dikkatlice oku.
 
 ## 🏗️ Projeye Genel Bakış
-Nokta Canvas, tamamen tarayıcı üzerinde çalışan (Zero-Backend) ve Yüksek Dil Modellerini (LLM) kullanarak otonom bir şekilde JSON + Tailwind HTML döndüren dinamik bir React uygulamasıdır.
+Canvas Sheet, tamamen tarayıcı üzerinde çalışan (Zero-Backend) ve Yüksek Dil Modellerini (LLM) kullanarak otonom bir şekilde JSON + Tailwind HTML döndüren dinamik bir React uygulamasıdır.
 
 ### Temel Felsefe
 1. **Dinamik Üretim (Dynamic Generation):** Tablolar veya grafikler için önceden kodlanmış (hardcoded) React bileşenleri KULLANMIYORUZ. Bunun yerine, LLM'e anlık olarak özel ve stillendirilmiş HTML (`Tailwind CSS`) üretmesi için prompt (komut) veriyoruz.
