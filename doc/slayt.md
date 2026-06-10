@@ -1,4 +1,4 @@
-# 📊 Proje Slaytı
+# 📊 Proje Slaytı (Raise Summit Hackathon)
 
 > Sunumunuz başarıyla projeye dahil edildi. Aşağıdaki bağlantıya tıklayarak Github üzerinden doğrudan görüntüleyebilir veya indirebilirsiniz.
 

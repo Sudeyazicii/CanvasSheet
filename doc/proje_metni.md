@@ -2,6 +2,7 @@
 
 **Proje Adı:** Nokta Canvas (Sheet Canvas)
 **Kategori:** Otonom Veri Görselleştirme ve Raporlama
+**Etkinlik/Yarışma:** Raise Summit Hackathon Başvuru Projesi
 
 Nokta Canvas, tamamen tarayıcı üzerinde çalışan, backend ihtiyacı duymayan bir yapay zeka uygulamasıdır. Temel amacı, son kullanıcıların karmaşık veri analiz araçlarıyla vakit kaybetmeden, sadece doğal dil kullanarak verilerini görselleştirmelerini sağlamaktır.
 
