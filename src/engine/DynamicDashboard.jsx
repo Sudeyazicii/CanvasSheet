@@ -4,7 +4,7 @@ import DataHub from '../mcp/DataHub';
 import { Sparkles, Loader2, Info } from 'lucide-react';
 import { useGoogleAuth } from '../auth/useGoogleAuth';
 
-export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = false, metadata = null }) {
+export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = false, metadata = null, viewMode = 'grid', activeRule = null }) {
   const auth = useGoogleAuth();
   const accessToken = auth?.accessToken;
   const [sheetData, setSheetData] = useState({});
@@ -22,13 +22,9 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
         if (!requests.has(key)) {
           requests.set(key, { sheetName, range });
         }
-      } else {
-        // Default to all sheets if range not specified? 
-        // For now, let's assume Gemini follows instructions.
       }
     });
 
-    // If no explicit data sources, try to fetch first 10 rows of the first sheet
     if (requests.size === 0) {
       requests.set('A1:Z50', { sheetName: '', range: 'A1:Z50' });
     }
@@ -39,7 +35,6 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
   useEffect(() => {
     async function loadData() {
       if (mockMode) {
-        // Generate mock data based on metadata
         const mockDataMap = {};
         if (metadata && metadata.columnStats) {
           const headers = metadata.columnStats.map(c => c.name);
@@ -69,13 +64,10 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
 
         for (const req of dataRequests) {
           const range = req.range.includes('!') ? req.range : `${req.sheetName}${req.sheetName ? '!' : ''}${req.range}`;
-          
-          // Initial fetch
           const data = await DataHub.fetchData(range);
           const filteredData = data.filter((row, idx) => idx === 0 || row.some(cell => cell && cell.toString().trim() !== ''));
           dataMap[range] = filteredData;
 
-          // Subscribe for live updates
           const unsub = DataHub.subscribe(range, (updatedData) => {
             console.log(`🔔 Live update received for ${range}`);
             setSheetData(prev => ({
@@ -156,12 +148,33 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
             const WidgetComponent = getWidgetComponent(widget.type);
             if (!WidgetComponent) return null;
 
-            const colSpan = widget.gridPosition?.colSpan || 12;
-            const rowSpan = widget.gridPosition?.rowSpan || 1;
+            const colSpan = viewMode === 'list' ? 12 : (widget.gridPosition?.colSpan || 12);
+            const rowSpan = viewMode === 'list' ? 1 : (widget.gridPosition?.rowSpan || 1);
+
+            const colSpanClass = 
+              colSpan === 1 ? 'col-span-1' :
+              colSpan === 2 ? 'col-span-2' :
+              colSpan === 3 ? 'col-span-3' :
+              colSpan === 4 ? 'col-span-4' :
+              colSpan === 5 ? 'col-span-5' :
+              colSpan === 6 ? 'col-span-6' :
+              colSpan === 7 ? 'col-span-7' :
+              colSpan === 8 ? 'col-span-8' :
+              colSpan === 9 ? 'col-span-9' :
+              colSpan === 10 ? 'col-span-10' :
+              colSpan === 11 ? 'col-span-11' :
+              'col-span-12';
+
+            const rowSpanClass = 
+              rowSpan === 1 ? 'row-span-1' :
+              rowSpan === 2 ? 'row-span-2' :
+              rowSpan === 3 ? 'row-span-3' :
+              rowSpan === 4 ? 'row-span-4' :
+              rowSpan === 5 ? 'row-span-5' :
+              'row-span-6';
 
             const dataKey = widget.dataSource ? (widget.dataSource.range.includes('!') ? widget.dataSource.range : `${widget.dataSource.sheetName}${widget.dataSource.sheetName ? '!' : ''}${widget.dataSource.range}`) : null;
             
-            // Flexible matching: exact key -> just range -> first available
             let widgetData = sheetData[dataKey];
             if (!widgetData && widget.dataSource) widgetData = sheetData[widget.dataSource.range];
             if (!widgetData) widgetData = Object.values(sheetData)[0];
@@ -169,20 +182,17 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
             return (
               <div
                 key={`${widget.type}-${index}`}
-                className="group relative transition-all duration-150 hover:-translate-y-1"
-                style={{
-                  gridColumn: `span ${colSpan}`,
-                  gridRow: `span ${rowSpan}`,
-                }}
+                className={`group relative transition-all duration-150 hover:-translate-y-1 ${colSpanClass} ${rowSpanClass}`}
               >
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-[32px] blur opacity-0 group-hover:opacity-10 transition duration-200"></div>
                 <div className="relative glass-panel rounded-[32px] overflow-hidden border-white/5 group-hover:border-white/10 transition-colors h-full">
                   <WidgetComponent
-                    title={widget.title}
-                    sheetData={widgetData}
-                    onDataChange={(newData) => handleDataChange(index, newData)}
-                    config={widget.config}
-                    style={widget.style}
+                     title={widget.title}
+                     sheetData={widgetData}
+                     onDataChange={(newData) => handleDataChange(index, newData)}
+                     config={widget.config}
+                     style={widget.style}
+                     activeRule={activeRule}
                   />
                 </div>
               </div>

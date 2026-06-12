@@ -55,6 +55,50 @@ class NoktaVoice {
     speechSynthesis.speak(utter);
   }
 
+  startListening(onResult, onEnd) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.warn("Speech recognition not supported in this browser.");
+      return;
+    }
+
+    this.stopListening();
+    this.recognition = new SpeechRecognition();
+    this.recognition.lang = 'tr-TR';
+    this.recognition.interimResults = false;
+    this.recognition.maxAlternatives = 1;
+
+    this.recognition.onstart = () => {
+      this.isListening = true;
+    };
+
+    this.recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      onResult?.(transcript);
+    };
+
+    this.recognition.onend = () => {
+      this.isListening = false;
+      onEnd?.();
+    };
+
+    this.recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      this.isListening = false;
+      onEnd?.();
+    };
+
+    this.recognition.start();
+  }
+
+  stopListening() {
+    if (this.recognition) {
+      this.recognition.abort();
+      this.recognition = null;
+    }
+    this.isListening = false;
+  }
+
   _startLipSync() {
     this._stopLipSync();
     this._interval = setInterval(() => {

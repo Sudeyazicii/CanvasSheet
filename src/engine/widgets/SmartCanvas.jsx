@@ -5,15 +5,13 @@ import { useMemo } from 'react';
  * Gemini tarafından üretilen ham HTML ve Tailwind CSS kodlarını render eder.
  * Statik tasarım İÇERMEZ, her şey Gemini'den gelir.
  */
-export default function SmartCanvas({ title, sheetData, config }) {
+export default function SmartCanvas({ title, sheetData, config, activeRule }) {
   const renderedContent = useMemo(() => {
     if (!config?.htmlTemplate) return '<div style="color: #94A3B8; padding: 20px;">Tasarım bekleniyor...</div>';
     if (!sheetData || sheetData.length === 0) return '<div style="color: #94A3B8; padding: 20px;">Veri bekleniyor...</div>';
 
     let html = config.htmlTemplate;
 
-    // Basit Veri Yerleştirme (Data Injection)
-    // {{COL_0}}, {{COL_1}}, {{TITLE}}, {{TOTAL_ROWS}} gibi placeholder'ları değiştirir
     const rawHeaders = sheetData[0] || [];
     const headers = rawHeaders.map((h, i) => {
       if (!h || h.toString().trim() === '') {
@@ -22,28 +20,93 @@ export default function SmartCanvas({ title, sheetData, config }) {
       return h;
     });
     const rows = sheetData.slice(1);
-    
-    // Değişkenleri tanımla
-    const variables = {
-      '{{TITLE}}': title || '',
-      '{{TOTAL_ROWS}}': rows.length,
-      '{{SHEET_NAME}}': config.sheetName || '',
+
+    const escapeRegExp = (str) => {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     };
 
-    // Sütun bazlı değişkenler
-    headers.forEach((header, i) => {
-      const cleanHeader = header.toString().toLowerCase().trim()
+    const getSimilarity = (s1, s2) => {
+      const a = s1.toLowerCase();
+      const b = s2.toLowerCase();
+      const costs = [];
+      for (let i = 0; i <= a.length; i++) {
+        let lastValue = i;
+        for (let j = 0; j <= b.length; j++) {
+          if (i === 0) {
+            costs[j] = j;
+          } else if (j > 0) {
+            let newValue = costs[j - 1];
+            if (a.charAt(i - 1) !== b.charAt(j - 1)) {
+              newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+            }
+            costs[j - 1] = lastValue;
+            lastValue = newValue;
+          }
+        }
+        if (i > 0) costs[b.length] = lastValue;
+      }
+      const maxLength = Math.max(a.length, b.length);
+      if (maxLength === 0) return 1.0;
+      return (maxLength - costs[b.length]) / maxLength;
+    };
+
+    const findBestColumnIndex = (tag, headersList) => {
+      const cleanTag = tag.toLowerCase().trim()
         .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u')
         .replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
         .replace(/\s+/g, '_');
+
+      let bestIdx = -1;
+      let highestScore = 0;
+
+      headersList.forEach((h, idx) => {
+        const cleanH = h.toString().toLowerCase().trim()
+          .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u')
+          .replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
+          .replace(/\s+/g, '_');
+
+        if (cleanH === cleanTag) {
+          bestIdx = idx;
+          highestScore = 2.0; // Perfect match
+        }
+      });
+
+      if (highestScore > 1.0) return bestIdx;
+
+      headersList.forEach((h, idx) => {
+        const cleanH = h.toString().toLowerCase().trim()
+          .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u')
+          .replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
+          .replace(/\s+/g, '_');
+
+        const score = getSimilarity(cleanTag, cleanH);
+        if (score > highestScore && score > 0.4) {
+          highestScore = score;
+          bestIdx = idx;
+        }
+      });
+
+      return bestIdx;
+    };
+
+    const checkRule = (cellValue, operator, ruleValue) => {
+      if (cellValue === undefined || cellValue === null) return false;
+      const numCell = parseFloat(cellValue.toString().replace(/[^0-9.-]/g, ''));
+      const numRule = parseFloat(ruleValue.toString().replace(/[^0-9.-]/g, ''));
       
-      variables[`{{HEADER_${i}}}`] = header;
-      variables[`{{${cleanHeader}}}`] = rows.length > 0 ? rows[rows.length - 1][i] : '';
-      
-      if (rows.length > 0) {
-        variables[`{{LATEST_${i}}}`] = rows[rows.length - 1][i];
+      const isNumeric = !isNaN(numCell) && !isNaN(numRule);
+      const v1 = isNumeric ? numCell : cellValue.toString().toLowerCase().trim();
+      const v2 = isNumeric ? numRule : ruleValue.toString().toLowerCase().trim();
+
+      switch (operator) {
+        case '>': return v1 > v2;
+        case '<': return v1 < v2;
+        case '==': return v1 == v2;
+        case '!=': return v1 != v2;
+        case 'includes': return v1.toString().includes(v2.toString());
+        default: return false;
       }
-    });
+    };
 
     // 1. Önce Döngüleri (Loop) işle (Çünkü döngüler içindeki {{etiket}}'ler her satıra özeldir)
     if (html.includes('{{LOOP_START}}') && html.includes('{{LOOP_END}}')) {
@@ -56,36 +119,134 @@ export default function SmartCanvas({ title, sheetData, config }) {
       
       const loopHtml = renderRows.map(row => {
         let itemHtml = loopTemplate;
-        row.forEach((cell, i) => {
-          const cleanHeader = headers[i]?.toString().toLowerCase().trim()
-            .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u')
-            .replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
-            .replace(/\s+/g, '_');
-            
-          const colRegex = new RegExp(`\\{\\{COL_${i}\\}\\}`, 'gi');
-          itemHtml = itemHtml.replace(colRegex, cell || '');
+        
+        // Find all placeholders in this template instance
+        const matches = [...itemHtml.matchAll(/\{\{([^}]+)\}\}/g)].map(m => m[1]);
+        
+        matches.forEach(placeholder => {
+          const lowerPlaceholder = placeholder.toLowerCase().trim();
           
-          if (cleanHeader) {
-            // Sadece bu satıra özel olan etiketi değiştir
-            const tagRegex = new RegExp(`\\{\\{${cleanHeader}\\}\\}`, 'gi');
-            itemHtml = itemHtml.replace(tagRegex, cell || '');
+          if (lowerPlaceholder.startsWith('col_')) {
+            const colIdx = parseInt(lowerPlaceholder.replace('col_', ''), 10);
+            if (!isNaN(colIdx) && row[colIdx] !== undefined) {
+              const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+              itemHtml = itemHtml.replace(regex, row[colIdx] || '');
+            }
+            return;
+          }
+
+          if (lowerPlaceholder.startsWith('latest_')) {
+            const colIdx = parseInt(lowerPlaceholder.replace('latest_', ''), 10);
+            if (!isNaN(colIdx) && rows.length > 0) {
+              const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+              itemHtml = itemHtml.replace(regex, rows[rows.length - 1][colIdx] || '');
+            }
+            return;
+          }
+
+          const colIdx = findBestColumnIndex(placeholder, headers);
+          if (colIdx !== -1 && row[colIdx] !== undefined) {
+            const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+            itemHtml = itemHtml.replace(regex, row[colIdx] || '');
           }
         });
+
+        // Apply dynamic highlighting or filtering rule if active
+        const targetColIdx = activeRule && (activeRule.targetColumnIndex !== undefined ? activeRule.targetColumnIndex : findBestColumnIndex(activeRule.targetColumn, headers));
+        if (activeRule && targetColIdx !== -1 && targetColIdx !== undefined) {
+          const cellValue = row[targetColIdx];
+          const isMet = checkRule(cellValue, activeRule.operator, activeRule.value);
+          
+          if (isMet) {
+            if (activeRule.action === 'filter_out') {
+              return null; // Skip rendering this item
+            }
+            let styleClass = "";
+            if (activeRule.action === 'highlight_red') {
+              styleClass = "bg-rose-500/20 border-rose-500/40 text-rose-200 shadow-[0_0_15px_rgba(239,68,68,0.15)]";
+            } else if (activeRule.action === 'highlight_green') {
+              styleClass = "bg-emerald-500/20 border-emerald-500/40 text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.15)]";
+            } else if (activeRule.action === 'highlight_yellow') {
+              styleClass = "bg-amber-500/20 border-amber-500/40 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.15)]";
+            }
+            if (styleClass) {
+              itemHtml = itemHtml.replace(/^(<tr|<div|<li)/i, `$1 class="${styleClass}" `);
+            }
+          }
+        }
+
         return itemHtml;
-      }).join('');
+      }).filter(Boolean).join('');
       
       html = before + loopHtml + after;
     }
 
     // 2. Sonra Global Değişkenleri işle (KPI'lar, Başlıklar vb. - Bunlar en son veriyi kullanır)
-    Object.entries(variables).forEach(([key, val]) => {
-      const regexKey = key.replace(/[{}]/g, '\\$&');
-      const regex = new RegExp(regexKey, 'gi');
-      html = html.replace(regex, val || '');
+    const globalMatches = [...html.matchAll(/\{\{([^}]+)\}\}/g)].map(m => m[1]);
+    
+    globalMatches.forEach(placeholder => {
+      const lowerPlaceholder = placeholder.toLowerCase().trim();
+      
+      if (lowerPlaceholder === 'title') {
+        const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+        html = html.replace(regex, title || '');
+        return;
+      }
+      if (lowerPlaceholder === 'total_rows' || lowerPlaceholder === 'rowcount') {
+        const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+        html = html.replace(regex, rows.length.toString());
+        return;
+      }
+      if (lowerPlaceholder === 'sheet_name' || lowerPlaceholder === 'sheetname') {
+        const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+        html = html.replace(regex, config.sheetName || 'Veri Kaynağı');
+        return;
+      }
+      if (lowerPlaceholder === 'primarymeasure') {
+        const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+        const primaryColName = config.primaryMeasure || 'Sales';
+        const colIdx = findBestColumnIndex(primaryColName, headers);
+        let val = '';
+        if (colIdx !== -1 && rows.length > 0) {
+          const sum = rows.reduce((acc, row) => {
+            const num = parseFloat(row[colIdx]?.toString().replace(/[^0-9.-]/g, ''));
+            return acc + (isNaN(num) ? 0 : num);
+          }, 0);
+          val = sum > 0 ? sum.toLocaleString('tr-TR', { maximumFractionDigits: 0 }) + ' ₺' : primaryColName;
+        } else {
+          val = primaryColName;
+        }
+        html = html.replace(regex, val);
+        return;
+      }
+      
+      if (lowerPlaceholder.startsWith('header_')) {
+        const colIdx = parseInt(lowerPlaceholder.replace('header_', ''), 10);
+        if (!isNaN(colIdx) && headers[colIdx] !== undefined) {
+          const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+          html = html.replace(regex, headers[colIdx] || '');
+        }
+        return;
+      }
+
+      if (lowerPlaceholder.startsWith('latest_')) {
+        const colIdx = parseInt(lowerPlaceholder.replace('latest_', ''), 10);
+        if (!isNaN(colIdx) && rows.length > 0) {
+          const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+          html = html.replace(regex, rows[rows.length - 1][colIdx] || '');
+        }
+        return;
+      }
+
+      const colIdx = findBestColumnIndex(placeholder, headers);
+      if (colIdx !== -1 && rows.length > 0 && rows[rows.length - 1][colIdx] !== undefined) {
+        const regex = new RegExp(`\\{\\{${escapeRegExp(placeholder)}\\}\\}`, 'gi');
+        html = html.replace(regex, rows[rows.length - 1][colIdx] || '');
+      }
     });
 
     return html;
-  }, [title, sheetData, config]);
+  }, [title, sheetData, config, activeRule]);
 
   return (
     <div 

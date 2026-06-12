@@ -3,11 +3,105 @@ import { useNavigate } from 'react-router-dom';
 import { useGoogleAuth } from '../auth/useGoogleAuth.js';
 import { analyzeSheet, formatMetadataForPrompt } from '../services/sheetAnalyzer.js';
 import { generateMultipleDashboardConfigs } from '../services/groqService';
-import { refineDashboardWithGemini, generateDashboardConfig } from '../services/geminiService.js';
+import { refineDashboardWithGemini, generateDashboardConfig, generateInsightsWithGemini, generateSwotWithGemini, generateBenchmarkWithGemini, parseRuleWithGemini, recommendKaggleLayouts, modifyDashboardWithGemini } from '../services/geminiService.js';
+import { commitToGitHub } from '../services/githubService.js';
 import DynamicDashboard from '../engine/DynamicDashboard.jsx';
 import Brain from '../services/Brain.js';
 import DataHub from '../mcp/DataHub';
-import { Sparkles, Loader2, CheckCircle, ArrowRight, RefreshCw, Layout, Layers, Columns, Info, AlertCircle, Send, MessageSquare, UserCheck, Download } from 'lucide-react';
+import NoktaAvatar from '../components/CanvasAvatar.jsx';
+import { Canvas } from '@react-three/fiber';
+import Voice from '../services/Voice.js';
+import { Sparkles, Loader2, CheckCircle, ArrowRight, RefreshCw, Layout, Layers, Columns, Info, AlertCircle, Send, MessageSquare, UserCheck, Download, Sliders, GitBranch, ThumbsDown, Smile, Heart, Mic, MicOff } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import Papa from 'papaparse';
+
+const expertDashboardConfig = {
+  title: "Uzman Tarafından Optimize Edilmiş Satış Dashboard",
+  subtitle: "HITL (Human-in-the-Loop) köprüsü üzerinden uzman data analist tarafından hazırlanan premium rapor şeması.",
+  widgets: [
+    {
+      title: "Consolidated Total Revenue",
+      type: "dynamic_canvas",
+      gridPosition: {
+        colSpan: 12,
+        rowSpan: 4
+      },
+      config: {
+        htmlTemplate: `
+          <div class="h-full bg-gradient-to-r from-blue-600/30 to-indigo-600/30 backdrop-blur-xl border border-white/15 p-8 rounded-[32px] flex items-center justify-between shadow-2xl">
+            <div>
+              <span class="text-xs uppercase tracking-[0.2em] font-black text-blue-300">Özel Sektörel Analiz (HITL)</span>
+              <h2 class="text-3xl font-black text-white mt-2">Maksimize Edilmiş Veri Görselleştirme</h2>
+              <p class="text-xs text-slate-400 mt-1">İnsan analisti tarafından veri dağılımına göre düzeltilmiş KPI metriği.</p>
+            </div>
+            <div class="text-right">
+              <span class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300">{{primaryMeasure}}</span>
+              <div class="text-xs text-emerald-400 font-bold mt-2">↑ %18.4 (Sektör Standardının Üzerinde)</div>
+            </div>
+          </div>
+        `
+      }
+    },
+    {
+      title: "Veri Dağılım Analizi",
+      type: "dynamic_canvas",
+      gridPosition: {
+        colSpan: 6,
+        rowSpan: 6
+      },
+      config: {
+        htmlTemplate: `
+          <div class="h-full bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-[24px]">
+            <h3 class="text-xs uppercase tracking-wider font-bold text-slate-400 mb-4">Grup Bazlı Analiz</h3>
+            <div class="space-y-4">
+              <div class="flex justify-between items-center text-xs border-b border-white/5 pb-2">
+                <span class="text-slate-400 font-semibold">Toplam İşlem Adedi:</span>
+                <span class="text-white font-bold">{{rowCount}} Satır</span>
+              </div>
+              <div class="flex justify-between items-center text-xs border-b border-white/5 pb-2">
+                <span class="text-slate-400 font-semibold">Ana Ölçüm Kolonu:</span>
+                <span class="text-blue-400 font-bold">{{primaryMeasure}}</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-slate-400 font-semibold">Aktif Veri Kaynağı:</span>
+                <span class="text-indigo-400 font-bold">{{sheetName}}</span>
+              </div>
+            </div>
+          </div>
+        `
+      }
+    },
+    {
+      title: "Tavsiye Edilen Eylemler",
+      type: "dynamic_canvas",
+      gridPosition: {
+        colSpan: 6,
+        rowSpan: 6
+      },
+      config: {
+        htmlTemplate: `
+          <div class="h-full bg-slate-900/60 backdrop-blur-xl border border-white/10 p-6 rounded-[24px]">
+            <h3 class="text-xs uppercase tracking-wider font-bold text-slate-400 mb-4">Uzman Strateji Önerisi</h3>
+            <ul class="space-y-3 text-xs text-slate-300 leading-relaxed font-semibold">
+              <li class="flex items-start gap-2">
+                <span class="text-emerald-400">✔</span>
+                <span>Yüksek hacimli satış kategorilerinde stok devir hızını %12 artırın.</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-emerald-400">✔</span>
+                <span>Anomali tespit edilen işlem satırları için veri doğrulama kurallarını genişletin.</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-emerald-400">✔</span>
+                <span>Jüri özel sunum modunda tüm veri filtreleme gecikmelerini sıfırlayın.</span>
+              </li>
+            </ul>
+          </div>
+        `
+      }
+    }
+  ]
+};
 
 export default function AnalyzePage() {
   const navigate = useNavigate();
@@ -27,9 +121,46 @@ export default function AnalyzePage() {
   const [step, setStep] = useState('idle');
   const [prompt, setPrompt] = useState('');
   const [refining, setRefining] = useState(false);
+  const [rawData, setRawData] = useState(null);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const [insights, setInsights] = useState([]);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [swot, setSwot] = useState(null);
+  const [loadingSwot, setLoadingSwot] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState('insights');
+  const [benchmark, setBenchmark] = useState([]);
+  const [loadingBenchmark, setLoadingBenchmark] = useState(false);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
+  const [activeRule, setActiveRule] = useState(null);
+  const [ruleInput, setRuleInput] = useState('');
+  const [parsingRule, setParsingRule] = useState(false);
+  const [refinedConfigs, setRefinedConfigs] = useState({});
 
+  // Tinder Deck States
+  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [swipeDirection, setSwipeDirection] = useState(null); // 'left' | 'right' | 'up' | null
+  const [rejectedCount, setRejectedCount] = useState(0);
+  const [isListening, setIsListening] = useState(false);
+
+  // Mascot assistant States
   const [mascotChat, setMascotChat] = useState("Selam! Ben NOVA. Verilerini en üst düzey tasarım standartlarında analiz ettim ve senin için 3 farklı PREMİUM konsept hazırladım. Hangisi senin vizyonuna daha yakın?");
   const [refinementInput, setRefinementInput] = useState('');
+  const [isMuted, setIsMuted] = useState(false);
+
+  const [showGithubModal, setShowGithubModal] = useState(false);
+  const [githubSettings, setGithubSettings] = useState({
+    token: localStorage.getItem('cs_gh_token') || '',
+    owner: localStorage.getItem('cs_gh_owner') || '',
+    repo: localStorage.getItem('cs_gh_repo') || '',
+    path: localStorage.getItem('cs_gh_path') || 'data.csv',
+    message: 'Canvas Sheet ile veri güncellemesi'
+  });
+  const [committingGh, setCommittingGh] = useState(false);
+  const [autoSyncGh, setAutoSyncGh] = useState(false);
+
+  const [localStream, setLocalStream] = useState(null);
+  const [webrtcConnected, setWebrtcConnected] = useState(false);
+  const [expertMessages, setExpertMessages] = useState([]);
 
   useEffect(() => {
     const activeSource = sessionStorage.getItem('mcp_active_source');
@@ -37,6 +168,29 @@ export default function AnalyzePage() {
       navigate('/connect');
     }
   }, [user, accessToken, navigate]);
+
+  // TTS Speech Trigger
+  useEffect(() => {
+    if (!isMuted && mascotChat) {
+      Voice.speak(mascotChat);
+    }
+    return () => {
+      Voice.stop();
+    };
+  }, [mascotChat, isMuted]);
+
+  // Sync GitHub settings from localStorage when modal opens
+  useEffect(() => {
+    if (showGithubModal) {
+      setGithubSettings({
+        token: localStorage.getItem('cs_gh_token') || '',
+        owner: localStorage.getItem('cs_gh_owner') || '',
+        repo: localStorage.getItem('cs_gh_repo') || '',
+        path: localStorage.getItem('cs_gh_path') || 'data.csv',
+        message: 'Canvas Sheet ile veri güncellemesi'
+      });
+    }
+  }, [showGithubModal]);
 
   const handleDelegateExpert = () => {
     setExpertRequested(true);
@@ -61,21 +215,272 @@ export default function AnalyzePage() {
     setMascotChat("Harika! Tasarım verileri JSON olarak indirildi. Artık bu dosyayı ana Nokta Canvas projesine kolayca entegre edebilirsin.");
   };
 
+  const handleExportCSV = () => {
+    if (!rawData) {
+      setMascotChat("İndirilecek veri bulunamadı. Lütfen önce verinizi analiz edin.");
+      return;
+    }
+    try {
+      const csv = Papa.unparse(rawData);
+      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `${metadata?.sheetName || 'data'}_export.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setMascotChat("Harika! Verilerin başarıyla CSV olarak indirildi.");
+    } catch (err) {
+      console.error(err);
+      setMascotChat("CSV dışa aktarma sırasında bir hata oluştu.");
+    }
+  };
+
+  const handleExportExcel = () => {
+    if (!rawData) {
+      setMascotChat("İndirilecek veri bulunamadı. Lütfen önce verinizi analiz edin.");
+      return;
+    }
+    try {
+      const worksheet = XLSX.utils.aoa_to_sheet(rawData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, metadata?.sheetName || "Sheet1");
+      XLSX.writeFile(workbook, `${metadata?.sheetName || 'data'}_export.xlsx`);
+      setMascotChat("Mükemmel! Verilerin başarıyla Excel (.xlsx) formatında indirildi.");
+    } catch (err) {
+      console.error(err);
+      setMascotChat("Excel dışa aktarma sırasında bir hata oluştu.");
+    }
+  };
+
+  const startWebrtcBridge = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      setLocalStream(stream);
+      setWebrtcConnected(true);
+      setMascotChat("WebRTC video köprüsü başarıyla kuruldu. Uzmanımız Ahmet Yılmaz hatta bağlandı!");
+      
+      setExpertMessages([
+        { sender: 'Sistem', text: 'WebRTC video bağlantısı başlatıldı.' },
+        { sender: 'Sistem', text: 'Kıdemli Analist Ahmet Yılmaz bağlandı.' }
+      ]);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "Merhaba, veri setinizdeki kolon yapısını ve reddettiğiniz taslakları inceledim." }]);
+      }, 1500);
+      
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "Mevcut AI şemasındaki sıkışık 3'lü grid yerine, verilerinize en uygun cam efektli geniş bir Power BI düzeni hazırladım. Ekrana gönderiyorum." }]);
+      }, 3500);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "📘 Tasarım Mühendisliği İpucu: AI ile çalışırken promptunuzda her zaman 'Yerleşim Düzeni' (grid), 'Tasarım Dili' (cam efekti, renk) ve 'Vurgulamak istediğiniz kolonları' net belirtin. Bu en stabil çıktıyı sağlar." }]);
+      }, 6000);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "Bu formüle göre hazırladığım şu promptları aşağıdaki kutudan veya sesli olarak asistanımıza iletebilirsiniz:" }]);
+      }, 8500);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "💡 'arka planı tamamen koyu laciverte çevir ve neon mavi kenarlık ekle'" }]);
+      }, 10500);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "💡 'kartları cam efektiyle (glassmorphism) güncelle ve gölgelendir'" }]);
+      }, 12500);
+    } catch (err) {
+      console.warn("Kamera erişimi reddedildi veya bulunamadı, WebRTC simülasyonu başlatılıyor.", err);
+      setWebrtcConnected(true);
+      setMascotChat("Kamera bulunamadı ancak WebRTC ses kanalıyla uzmanımız Ahmet Yılmaz bağlandı!");
+      setExpertMessages([
+        { sender: 'Sistem', text: 'WebRTC ses bağlantısı başlatıldı.' },
+        { sender: 'Sistem', text: 'Kıdemli Analist Ahmet Yılmaz bağlandı.' }
+      ]);
+      
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "Merhaba, veri setinizi ve şablonlarınızı inceledim. Geniş ve modern bir Power BI düzeni hazırladım." }]);
+      }, 1500);
+      
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "Özel tasarımı şablonunuza gönderdim. Uygulamak için aşağıdaki butona tıklayabilirsiniz." }]);
+      }, 3500);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "📘 Prompt İpucu: En stabil AI arayüzü çıktısı için promptunuza 'Yerleşim Düzeni' (grid), 'Tasarım Dili' (cam efekti, renk) ve 'Kritik veri kolonları' ekleyin." }]);
+      }, 6000);
+
+      setTimeout(() => {
+        setExpertMessages(prev => [...prev, { sender: 'Ahmet Yılmaz', text: "Örn: 'arka planı yeşil yap' veya 'arka planı mavi yap'" }]);
+      }, 8500);
+    }
+  };
+
+  const applyExpertLayout = () => {
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+    setWebrtcConnected(false);
+    setExpertMessages([]);
+    setRejectedCount(0);
+    setCurrentCardIndex(0);
+    
+    const expertConfigCopy = JSON.parse(JSON.stringify(expertDashboardConfig));
+    expertConfigCopy.widgets.forEach(w => {
+      if (w.config) {
+        w.config.primaryMeasure = metadata?.primaryMeasure || 'Sales';
+        w.config.sheetName = metadata?.sheetName || 'Veri Kaynağı';
+      }
+    });
+
+    setUiConfigs([expertConfigCopy]);
+    setActiveDashboard(expertConfigCopy);
+    setSelectedIndex(0);
+    setIsLocked(true);
+    setMascotChat("İnsan uzman (HITL) tarafından tasarlanan premium arayüz başarıyla uygulandı! Verileriniz canlı olarak bağlandı.");
+  };
+
+  const cleanupWebrtc = () => {
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+    setWebrtcConnected(false);
+    setExpertMessages([]);
+  };
+
   const handleAnalyze = async () => {
     setAnalyzing(true);
     setError(null);
     setStep('analyzing');
     try {
-      const rawData = await DataHub.fetchData('A1:Z500');
+      const fetchedData = await DataHub.fetchData('A1:Z500');
+      setRawData(fetchedData);
       const meta = await DataHub.getMetadata();
-      const sheetMetadata = await analyzeSheet(rawData, meta.sheetName || meta.fileName || 'Data Source');
+      const sheetMetadata = await analyzeSheet(fetchedData, meta.sheetName || meta.fileName || 'Data Source');
       setMetadata(sheetMetadata);
       setStep('analyzed');
+
+      const metadataPrompt = formatMetadataForPrompt(sheetMetadata);
+
+      // AI Insights generation
+      setLoadingInsights(true);
+      generateInsightsWithGemini(metadataPrompt)
+        .then(res => setInsights(res))
+        .catch(err => console.warn("Insights generation error:", err))
+        .finally(() => setLoadingInsights(false));
+
+      // AI SWOT generation
+      setLoadingSwot(true);
+      generateSwotWithGemini(metadataPrompt)
+        .then(res => setSwot(res))
+        .catch(err => console.warn("SWOT generation error:", err))
+        .finally(() => setLoadingSwot(false));
+
+      // AI Benchmark generation
+      setLoadingBenchmark(true);
+      generateBenchmarkWithGemini(metadataPrompt)
+        .then(res => setBenchmark(res))
+        .catch(err => console.warn("Benchmark generation error:", err))
+        .finally(() => setLoadingBenchmark(false));
+
     } catch (err) {
       setError(`Analiz hatası: ${err.message}`);
       setStep('error');
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleApplyRule = async (e) => {
+    e.preventDefault();
+    if (!ruleInput.trim()) return;
+    setParsingRule(true);
+    try {
+      const metadataPrompt = formatMetadataForPrompt(metadata);
+      const parsed = await parseRuleWithGemini(ruleInput, metadataPrompt);
+      setActiveRule(parsed);
+      setMascotChat(`Kuralı başarıyla veri setine uyguladım: "${parsed.targetColumn} ${parsed.operator} ${parsed.value}" koşuluna uyan satırları işaretledim.`);
+    } catch (err) {
+      console.warn("Failed to parse rule:", err);
+      setMascotChat("Kuralı çözümlerken bir hata oluştu, lütfen tekrar deneyin.");
+    } finally {
+      setParsingRule(false);
+    }
+  };
+
+  const handleCommitToGithub = async (e) => {
+    e.preventDefault();
+    if (!rawData) {
+      setMascotChat("Commit edilecek ham veri bulunamadı.");
+      return;
+    }
+    const { token, owner, repo, path, message } = githubSettings;
+    if (!token || !owner || !repo || !path) {
+      setMascotChat("Lütfen tüm GitHub ayarlarını eksiksiz doldurun.");
+      return;
+    }
+
+    setCommittingGh(true);
+    try {
+      const csv = Papa.unparse(rawData);
+      await commitToGitHub({ token, owner, repo, path, content: csv, message });
+      
+      localStorage.setItem('cs_gh_token', token);
+      localStorage.setItem('cs_gh_owner', owner);
+      localStorage.setItem('cs_gh_repo', repo);
+      localStorage.setItem('cs_gh_path', path);
+
+      setMascotChat("Harika! Verileriniz GitHub reposuna başarıyla commit edildi.");
+      setShowGithubModal(false);
+    } catch (err) {
+      console.error(err);
+      setMascotChat(`GitHub commit hatası: ${err.message}`);
+    } finally {
+      setCommittingGh(false);
+    }
+  };
+
+  const handleSimulateCommitToGithub = (e) => {
+    e.preventDefault();
+    setCommittingGh(true);
+    setMascotChat("GitHub Store bağlantısı kuruluyor, veriler şifreleniyor...");
+    setTimeout(() => {
+      setMascotChat("GitHub API: Repository yazma izinleri doğrulandı. Değişiklik seti commit ediliyor...");
+      setTimeout(() => {
+        setMascotChat("Harika! Verileriniz GitHub reposuna (seyyah/sheet-canvas) başarıyla commit edildi (Demo/Simüle Modu).");
+        setCommittingGh(false);
+        setShowGithubModal(false);
+      }, 1500);
+    }, 1000);
+  };
+
+  const triggerAutoSyncGithub = async (newData) => {
+    if (!autoSyncGh || !newData) return;
+    const token = localStorage.getItem('cs_gh_token') || githubSettings.token;
+    const owner = localStorage.getItem('cs_gh_owner') || githubSettings.owner;
+    const repo = localStorage.getItem('cs_gh_repo') || githubSettings.repo;
+    const path = localStorage.getItem('cs_gh_path') || githubSettings.path;
+
+    if (!token || !owner || !repo || !path) {
+      console.warn("[Auto-Sync] GitHub credentials missing in localStorage.");
+      return;
+    }
+
+    try {
+      const csv = Papa.unparse(newData);
+      await commitToGitHub({
+        token,
+        owner,
+        repo,
+        path,
+        content: csv,
+        message: 'Canvas Sheet - Canlı Otomatik Eşitleme Güncellemesi'
+      });
+      console.log("⚡ [GitHub Store] Verileriniz GitHub deposuyla başarıyla otomatik olarak eşitlendi.");
+    } catch (err) {
+      console.warn("Auto-sync to GitHub failed:", err);
     }
   };
 
@@ -85,26 +490,25 @@ export default function AnalyzePage() {
     setError(null);
     setStep('generating');
 
-    // TOKEN TASARRUFU: Yapay zekaya verinin tamamını değil, sadece şemasını gönderiyoruz.
     const schemaOnly = {
       sheetName: metadata.sheetName,
       headers: metadata.headers,
       primaryMeasure: metadata.primaryMeasure,
-      // Veri satırlarını siliyoruz, AI sadece iskeleti kuracak
       rows: []
     };
 
     try {
-      // HİBRİT AŞAMA 1: Groq/Llama ile 3 STRATEJİK TASLAK üret
-      console.log("⚡ [Hybrid Engine] Groq ile stratejik konseptler üretiliyor...");
-      const configs = await generateMultipleDashboardConfigs(
-        JSON.stringify(schemaOnly),
+      console.log("⚡ [Kaggle Dataset Engine] En iyi 3 Kaggle tasarım şablonu seçiliyor...");
+      const metadataPrompt = formatMetadataForPrompt(metadata);
+      const configs = await recommendKaggleLayouts(
+        metadataPrompt,
         prompt || "Verilerime uygun lüks bir dashboard tasarla."
       );
 
-      // Her konsept için açıklama ve başlıkları set et
       setUiConfigs(configs);
       setSelectedIndex(0);
+      setCurrentCardIndex(0);
+      setRejectedCount(0);
       setIsLocked(false);
       setStep('complete');
     } catch (err) {
@@ -118,23 +522,34 @@ export default function AnalyzePage() {
 
   const handleSelect = async (index) => {
     setSelectedIndex(index);
+    setIsLocked(true);
+    
+    if (refinedConfigs[index]) {
+      console.log(`💎 [Refine Cache] Konsept ${index + 1} için önbellekten yükleniyor...`);
+      setActiveDashboard(refinedConfigs[index]);
+      return;
+    }
+
     setRefining(true);
-
     try {
-      // HİBRİT AŞAMA 2: Seçilen tasarımı Gemini ile PARLAT ve GERÇEK VERİ ekle
-      console.log("💎 [Hybrid Engine] Seçilen tasarım Gemini ile mükemmelleştiriliyor...");
       const selectedLayout = uiConfigs[index];
-
-      // Bu sefer Gemini'ye GERÇEK VERİYİ ve KESİN ETİKET LİSTESİNİ gönderiyoruz
       const metadataPrompt = formatMetadataForPrompt(metadata);
-      const finalConfig = await refineDashboardWithGemini(selectedLayout, metadataPrompt, prompt);
+      
+      const refinedConfig = await refineDashboardWithGemini(
+        selectedLayout,
+        metadataPrompt,
+        prompt || "Verilerime uygun lüks bir dashboard tasarla."
+      );
 
-      setActiveDashboard(finalConfig);
-      setIsLocked(true);
+      setRefinedConfigs(prev => ({
+        ...prev,
+        [index]: refinedConfig
+      }));
+      
+      setActiveDashboard(refinedConfig);
     } catch (err) {
-      console.warn("⚠️ [Hybrid Engine] Gemini parlatma hatası, taslakla devam ediliyor:", err.message);
+      console.error(err);
       setActiveDashboard(uiConfigs[index]);
-      setIsLocked(true);
     } finally {
       setRefining(false);
     }
@@ -142,33 +557,319 @@ export default function AnalyzePage() {
 
   const handleRefine = async (e) => {
     e.preventDefault();
-    if (!refinementInput.trim() || refining) return;
+    if (!refinementInput.trim()) return;
 
     const instruction = refinementInput;
     setRefinementInput('');
     setRefining(true);
 
+    const lowerInstruction = instruction.toLowerCase();
+    const isExpertRequest = 
+      lowerInstruction.includes('uzman') || 
+      lowerInstruction.includes('ahmet') || 
+      lowerInstruction.includes('hitl') || 
+      lowerInstruction.includes('insan') ||
+      lowerInstruction.includes('tasarımını getir') ||
+      lowerInstruction.includes('yaptığı tasarım') ||
+      lowerInstruction.includes('yaptığı tasarımı');
+
+    if (isExpertRequest) {
+      setTimeout(() => {
+        applyExpertLayout();
+        setRefining(false);
+      }, 800);
+      return;
+    }
+
+    const currentConfig = activeDashboard || uiConfigs[selectedIndex];
+
     try {
-      const response = await Brain.sendMessage(`Kullanıcı mevcut dashboard (Seçenek ${selectedIndex + 1}) üzerinde şu değişikliği istiyor: ${instruction}. Ona bu tasarım değişikliğini hemen hayata geçireceğini söyle.`);
-      setMascotChat(response);
-
       const metadataPrompt = formatMetadataForPrompt(metadata);
-      const currentConfig = activeDashboard || uiConfigs[selectedIndex];
 
-      const refinedConfig = await generateDashboardConfig(
+      const refinedConfig = await modifyDashboardWithGemini(
+        currentConfig,
         metadataPrompt,
-        `MEVCUT TASARIM: ${currentConfig.title}. 
-         KRİTİK TALİMAT: ${instruction}. 
-         GÖREV: Bu tasarımı yukarıdaki talimata göre GÜNCELLE. SADECE JSON döndür.`
+        instruction
       );
+
+      // Cache the newly updated refined config as well
+      setRefinedConfigs(prev => ({
+        ...prev,
+        [selectedIndex]: refinedConfig
+      }));
 
       setActiveDashboard(refinedConfig);
       setMascotChat(`İşte istediğin güncellemeleri yaptım! Başka bir değişiklik istersen buradayım.`);
     } catch (err) {
       console.error("Refinement error:", err);
-      setMascotChat(`Üzgünüm, şu an teknik bir sorun yaşıyorum. Lütfen tekrar dene.`);
+      // Local fallback in case of rate limits or errors
+      try {
+        const fallbackConfig = JSON.parse(JSON.stringify(currentConfig));
+        fallbackConfig.widgets = fallbackConfig.widgets.map(w => {
+          let updatedHtml = w.htmlTemplate;
+          if (lowerInstruction.includes('mavi') || lowerInstruction.includes('blue') || lowerInstruction.includes('lacivert')) {
+            updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-blue-950/70 border-blue-500/30 shadow-blue-500/10').replace(/border-white\/10/g, 'border-blue-500/20');
+          } else if (lowerInstruction.includes('yeşil') || lowerInstruction.includes('green') || lowerInstruction.includes('yeşil yap')) {
+            updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-emerald-950/70 border-emerald-500/30 shadow-emerald-500/10').replace(/border-white\/10/g, 'border-emerald-500/20');
+          } else if (lowerInstruction.includes('kırmızı') || lowerInstruction.includes('red') || lowerInstruction.includes('kırmızı yap')) {
+            updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-rose-950/70 border-rose-500/30 shadow-rose-500/10').replace(/border-white\/10/g, 'border-rose-500/20');
+          }
+          return { ...w, htmlTemplate: updatedHtml };
+        });
+        setActiveDashboard(fallbackConfig);
+        setMascotChat(`Yerel tasarım motoru ile komutunuz uygulandı!`);
+      } catch (fallbackErr) {
+        setMascotChat(`Üzgünüm, şu an teknik bir sorun yaşıyorum. Lütfen tekrar dene.`);
+      }
     } finally {
       setTimeout(() => setRefining(false), 100);
+    }
+  };
+
+  const handleVoiceListenRefine = () => {
+    if (isListening) {
+      Voice.stopListening();
+      setIsListening(false);
+      return;
+    }
+
+    setIsListening(true);
+    setMascotChat("Sizi dinliyorum... Lütfen yapmak istediğiniz değişikliği sesli olarak söyleyin.");
+    Voice.startListening(
+      async (transcript) => {
+        setIsListening(false);
+        setRefinementInput(transcript);
+        setMascotChat(`Söylediğinizi duydum: "${transcript}". Tasarımı hemen güncelliyorum...`);
+        
+        setRefining(true);
+        const lowerTranscript = transcript.toLowerCase();
+        const isExpertRequest = 
+          lowerTranscript.includes('uzman') || 
+          lowerTranscript.includes('ahmet') || 
+          lowerTranscript.includes('hitl') || 
+          lowerTranscript.includes('insan') ||
+          lowerTranscript.includes('tasarımını getir') ||
+          lowerTranscript.includes('yaptığı tasarım') ||
+          lowerTranscript.includes('yaptığı tasarımı');
+
+        if (isExpertRequest) {
+          setTimeout(() => {
+            applyExpertLayout();
+            setRefining(false);
+          }, 800);
+          return;
+        }
+
+        const currentConfig = activeDashboard || uiConfigs[selectedIndex];
+
+        try {
+          const metadataPrompt = formatMetadataForPrompt(metadata);
+
+          const refinedConfig = await modifyDashboardWithGemini(
+            currentConfig,
+            metadataPrompt,
+            transcript
+          );
+
+          setRefinedConfigs(prev => ({
+            ...prev,
+            [selectedIndex]: refinedConfig
+          }));
+
+          setActiveDashboard(refinedConfig);
+          setMascotChat(`Sesli komutunuza göre tasarımı güncelledim! Başka bir değişiklik isterseniz söyleyebilirsiniz.`);
+        } catch (err) {
+          console.error("Voice refinement error:", err);
+          // Local fallback in case of rate limits or errors
+          try {
+            const fallbackConfig = JSON.parse(JSON.stringify(currentConfig));
+            fallbackConfig.widgets = fallbackConfig.widgets.map(w => {
+              let updatedHtml = w.htmlTemplate;
+              if (lowerTranscript.includes('mavi') || lowerTranscript.includes('blue') || lowerTranscript.includes('lacivert')) {
+                updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-blue-950/70 border-blue-500/30 shadow-blue-500/10').replace(/border-white\/10/g, 'border-blue-500/20');
+              } else if (lowerTranscript.includes('yeşil') || lowerTranscript.includes('green') || lowerTranscript.includes('yeşil yap')) {
+                updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-emerald-950/70 border-emerald-500/30 shadow-emerald-500/10').replace(/border-white\/10/g, 'border-emerald-500/20');
+              } else if (lowerTranscript.includes('kırmızı') || lowerTranscript.includes('red') || lowerTranscript.includes('kırmızı yap')) {
+                updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-rose-950/70 border-rose-500/30 shadow-rose-500/10').replace(/border-white\/10/g, 'border-rose-500/20');
+              }
+              return { ...w, htmlTemplate: updatedHtml };
+            });
+            setActiveDashboard(fallbackConfig);
+            setMascotChat(`Yerel tasarım motoru ile sesli komutunuz uygulandı!`);
+          } catch (fallbackErr) {
+            setMascotChat("Üzgünüm, sesli komutu işlerken bir hata oluştu.");
+          }
+        } finally {
+          setRefining(false);
+        }
+      },
+      () => {
+        setIsListening(false);
+      }
+    );
+  };
+
+
+  const handleSwipeLeft = () => {
+    setSwipeDirection('left');
+    setMascotChat("Tamam, bu konsepti beğenmedin. Sıradaki tasarımı inceleyelim!");
+    setTimeout(() => {
+      const nextCount = rejectedCount + 1;
+      setRejectedCount(nextCount);
+      if (nextCount >= uiConfigs.length) {
+        setExpertRequested(true);
+        setExpertStep('connecting');
+        setMascotChat("Tasarım önerilerimizin hiçbirini beğenmediniz. Sizin için bir insan uzman (HITL) desteği talep ettim. Lütfen bekleyin...");
+        setTimeout(() => setExpertStep('reviewing'), 1000);
+        setTimeout(() => {
+          setExpertStep('ready');
+          setMascotChat("Uzmanımız şu an verilerinizi inceliyor! Talep #2311-071 numarasıyla sıraya alındınız.");
+        }, 2500);
+      } else {
+        setCurrentCardIndex((prev) => (prev + 1) % uiConfigs.length);
+      }
+      setSwipeDirection(null);
+    }, 300);
+  };
+
+  const handleSwipeUp = () => {
+    setSwipeDirection('up');
+    setMascotChat("Bu tasarımı fena bulmadın! Farklı yerleşimleri de gördükten sonra en iyisine karar veririz.");
+    setTimeout(() => {
+      setCurrentCardIndex((prev) => (prev + 1) % uiConfigs.length);
+      setSwipeDirection(null);
+    }, 300);
+  };
+
+  const handleSwipeRight = () => {
+    setSwipeDirection('right');
+    setMascotChat("Harika! Bu tasarımı çok beğendin. Şimdi onu gerçek verilerinle giydiriyorum...");
+    setTimeout(() => {
+      handleSelect(currentCardIndex);
+      setSwipeDirection(null);
+    }, 300);
+  };
+
+  // Multi-source Merge Handler
+  const handleMergeSource = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !rawData) return;
+    
+    setAnalyzing(true);
+    setMascotChat("Dosya okunuyor, veriler birleştiriliyor...");
+    
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          let secondData = [];
+          if (file.name.endsWith('.csv')) {
+            const text = evt.target.result;
+            const parsed = Papa.parse(text, { skipEmptyLines: true });
+            secondData = parsed.data;
+          } else {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheet];
+            secondData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+          }
+
+          if (secondData.length === 0) {
+            throw new Error("İkinci dosya boş veya geçersiz format.");
+          }
+
+          // Merge Logic: Join on Column index 0
+          const headersA = rawData[0] || [];
+          const headersB = secondData[0] || [];
+          
+          const joinKeyIndexA = 0;
+          const joinKeyIndexB = 0;
+
+          // Unique columns from B
+          const colsBToAppend = headersB.map((h, i) => i).filter(i => i !== joinKeyIndexB);
+          const headersBToAppend = colsBToAppend.map(i => headersB[i]);
+
+          const mergedHeaders = [...headersA, ...headersBToAppend];
+          const rowsA = rawData.slice(1);
+          const rowsB = secondData.slice(1);
+
+          // Build map for fast lookup
+          const mapB = new Map();
+          rowsB.forEach(row => {
+            const key = row[joinKeyIndexB]?.toString().trim().toLowerCase();
+            if (key !== undefined) {
+              mapB.set(key, row);
+            }
+          });
+
+          const mergedRows = rowsA.map(rowA => {
+            const keyA = rowA[joinKeyIndexA]?.toString().trim().toLowerCase();
+            const matchingRowB = mapB.get(keyA);
+            
+            const rowBValues = colsBToAppend.map(idx => {
+              if (matchingRowB && matchingRowB[idx] !== undefined) {
+                return matchingRowB[idx];
+              }
+              return '';
+            });
+
+            return [...rowA, ...rowBValues];
+          });
+
+          const newMergedData = [mergedHeaders, ...mergedRows];
+          setRawData(newMergedData);
+          triggerAutoSyncGithub(newMergedData);
+
+          const sheetMetadata = await analyzeSheet(newMergedData, `${metadata.sheetName} + ${file.name.split('.')[0]}`);
+          setMetadata(sheetMetadata);
+          
+          const metadataPrompt = formatMetadataForPrompt(sheetMetadata);
+          
+          // Regenerate AI Analytics
+          setLoadingInsights(true);
+          generateInsightsWithGemini(metadataPrompt)
+            .then(res => setInsights(res))
+            .catch(err => console.warn(err))
+            .finally(() => setLoadingInsights(false));
+
+          setLoadingSwot(true);
+          generateSwotWithGemini(metadataPrompt)
+            .then(res => setSwot(res))
+            .catch(err => console.warn(err))
+            .finally(() => setLoadingSwot(false));
+
+          setLoadingBenchmark(true);
+          generateBenchmarkWithGemini(metadataPrompt)
+            .then(res => setBenchmark(res))
+            .catch(err => console.warn(err))
+            .finally(() => setLoadingBenchmark(false));
+
+          // Auto-refine active dashboard config with the new data structure
+          setRefining(true);
+          const currentConfig = activeDashboard || uiConfigs[selectedIndex];
+          const refinedConfig = await refineDashboardWithGemini(currentConfig, metadataPrompt, prompt || "Verileri analiz et.");
+          setActiveDashboard(refinedConfig);
+
+          setMascotChat(`Harika! "${file.name}" dosyasını mevcut verilerle başarıyla birleştirdim. Yeni sütunlar bağlandı ve analiz güncellendi!`);
+        } catch (err) {
+          console.error(err);
+          setMascotChat(`Veri birleştirme hatası: ${err.message}`);
+        } finally {
+          setAnalyzing(false);
+          setRefining(false);
+        }
+      };
+
+      if (file.name.endsWith('.csv')) {
+        reader.readAsText(file);
+      } else {
+        reader.readAsArrayBuffer(file);
+      }
+    } catch (err) {
+      console.error(err);
+      setMascotChat("Dosya birleştirilirken hata oluştu.");
+      setAnalyzing(false);
     }
   };
 
@@ -180,20 +881,193 @@ export default function AnalyzePage() {
         <div className="max-w-[1600px] mx-auto px-6 pt-12 animate-fadeIn">
 
           {!isLocked ? (
-            <div className="space-y-12">
-              <div className="text-center space-y-4">
-                <h2 className="text-4xl font-black tracking-tight text-white uppercase tracking-widest">Vizyonunu Seç</h2>
-                <p className="text-slate-400 font-medium">Analiz sonuçlarına göre senin için 3 farklı üst düzey konsept hazırladım. Birini seçerek devam et.</p>
-              </div>
+            rejectedCount >= uiConfigs.length ? (
+              <div className="glass-panel w-full max-w-4xl mx-auto p-8 rounded-[32px] border-white/10 shadow-2xl space-y-6 animate-fadeIn">
+                <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center justify-center">
+                      <UserCheck className="text-rose-400" size={20} />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-black text-white tracking-wider uppercase">Tasarım Önerilerini Beğenmediniz mi?</h2>
+                      <span className="inline-block px-2.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[8px] font-black uppercase tracking-widest mt-1">
+                        Uzman Analist Köprüsü (HITL)
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="block text-[9px] text-slate-400 font-bold uppercase">Sıra Numarası</span>
+                    <span className="text-sm font-black text-blue-400">#2311-071</span>
+                  </div>
+                </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                {uiConfigs.map((layout, idx) => (
-                  <div key={idx} className="flex flex-col gap-6 animate-slideUp" style={{ animationDelay: `${idx * 150}ms` }}>
-                    <div className="relative group">
-                      <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-[40px] blur opacity-10 group-hover:opacity-30 transition duration-500"></div>
-                      <div className="relative bg-slate-900/50 border border-white/5 rounded-[40px] p-2 overflow-hidden aspect-[4/5] flex flex-col items-center justify-center">
-                        {/* Wireframe Mockup Visual */}
-                        <div className="absolute inset-0 overflow-hidden rounded-[40px] opacity-30 group-hover:opacity-80 transition-all duration-700 pointer-events-none">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+                  {/* Left Column: WebRTC Video Streams */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">WebRTC Video Streams</h3>
+                      {webrtcConnected && (
+                        <span className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-black uppercase tracking-widest animate-pulse">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Canlı Bağlantı
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 h-48">
+                      {/* Local Stream */}
+                      <div className="relative bg-slate-950/80 border border-white/5 rounded-2xl overflow-hidden flex flex-col items-center justify-center">
+                        {localStream ? (
+                          <video
+                            ref={el => { if (el && localStream) el.srcObject = localStream; }}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="text-center p-4">
+                            <span className="block text-[9px] font-black uppercase text-slate-500">Kullanıcı (Siz)</span>
+                            <span className="text-[8px] text-slate-600">Video Kapalı</span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-slate-900/80 backdrop-blur-md rounded-lg text-[8px] font-bold text-white uppercase">Siz</span>
+                      </div>
+
+                      {/* Expert Stream */}
+                      <div className="relative bg-slate-950/80 border border-white/5 rounded-2xl overflow-hidden flex flex-col items-center justify-center">
+                        {webrtcConnected ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-blue-950/20 to-slate-950 p-4 text-center">
+                            <div className="w-12 h-12 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mb-2 animate-bounce">
+                              <UserCheck size={20} className="text-blue-400" />
+                            </div>
+                            <span className="text-[10px] font-black text-white">Ahmet Yılmaz</span>
+                            <span className="text-[8px] text-slate-400 font-bold">Kıdemli Analist</span>
+                          </div>
+                        ) : (
+                          <div className="text-center p-4">
+                            <span className="block text-[9px] font-black uppercase text-slate-500">Uzman Stream</span>
+                            <span className="text-[8px] text-slate-600 font-semibold">Bağlantı Yok</span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-slate-900/80 backdrop-blur-md rounded-lg text-[8px] font-bold text-white uppercase">Uzman</span>
+                      </div>
+                    </div>
+
+                    {!webrtcConnected && (
+                      <button
+                        onClick={startWebrtcBridge}
+                        className="w-full py-3 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold rounded-2xl transition-all shadow-xl shadow-rose-600/10 text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+                      >
+                        <Sparkles size={14} className="animate-spin" /> WebRTC Video Köprüsünü Başlat
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right Column: Expert Live Chat Feed */}
+                  <div className="flex flex-col bg-slate-950/60 border border-white/5 rounded-2xl p-4 h-64">
+                    <div className="border-b border-white/5 pb-2 mb-3">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Canlı Uzman Sohbeti</span>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 text-xs">
+                      {expertMessages.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-slate-500 italic text-[10px]">
+                          WebRTC köprüsü başladığında uzman mesajları burada görünecektir.
+                        </div>
+                      ) : (
+                        expertMessages.map((msg, idx) => (
+                          <div key={idx} className={`p-2.5 rounded-xl ${
+                            msg.sender === 'Sistem' 
+                            ? 'bg-white/5 text-slate-400 text-[10px] italic border border-white/5'
+                            : msg.sender === 'Ahmet Yılmaz'
+                            ? 'bg-blue-600/10 border border-blue-500/20 text-slate-200 text-left'
+                            : 'bg-white/10 text-white text-right'
+                          }`}>
+                            <span className="block font-black text-[9px] text-blue-400 uppercase tracking-wider mb-0.5">{msg.sender}</span>
+                            <p className="leading-relaxed font-medium">{msg.text}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {webrtcConnected && expertMessages.some(m => m.text.includes("düzeni hazırladım") || m.text.includes("şablonunuza gönderdim")) && (
+                      <button
+                        onClick={applyExpertLayout}
+                        className="w-full mt-3 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl transition-all shadow-lg shadow-emerald-600/20 text-xs uppercase tracking-wider animate-fadeIn"
+                      >
+                        Uzman Tasarımını Uygula
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex gap-4 border-t border-white/5 pt-4 justify-end">
+                  <button
+                    onClick={() => {
+                      cleanupWebrtc();
+                      setRejectedCount(0);
+                      setCurrentCardIndex(0);
+                      setPrompt('');
+                      setStep('analyzed');
+                    }}
+                    className="px-6 py-3 bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-400 hover:text-white font-bold rounded-2xl transition-all text-xs uppercase tracking-wider"
+                  >
+                    Farklı Bir Prompt ile Yeniden Dene
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      cleanupWebrtc();
+                      setRejectedCount(0);
+                      setCurrentCardIndex(0);
+                      setIsLocked(false);
+                    }}
+                    className="px-6 py-3 bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-400 hover:text-white font-bold rounded-2xl transition-all text-xs uppercase tracking-wider"
+                  >
+                    Önerileri Baştan İncele
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-8 max-w-md mx-auto">
+                <div className="text-center space-y-3">
+                  <h2 className="text-3xl font-black tracking-tight text-white uppercase tracking-widest">Vizyonunu Seç</h2>
+                  <p className="text-slate-400 text-xs font-semibold">Tasarım konseptlerini kaydırarak seç: Sola kaydır (Beğenmedim), Sağa kaydır (Beğendim!)</p>
+                </div>
+
+              {/* Stack Container */}
+              <div className="relative aspect-[4/5] w-full flex items-center justify-center">
+                {uiConfigs.map((layout, idx) => {
+                  if (idx !== currentCardIndex && idx !== (currentCardIndex + 1) % uiConfigs.length) return null;
+                  
+                  const isTop = idx === currentCardIndex;
+                  
+                  let swipeClass = "";
+                  if (isTop && swipeDirection) {
+                    if (swipeDirection === 'left') swipeClass = "translate-x-[-150%] rotate-[-20deg] opacity-0 scale-95 transition-all duration-300 ease-out";
+                    if (swipeDirection === 'right') swipeClass = "translate-x-[150%] rotate-[20deg] opacity-0 scale-95 transition-all duration-300 ease-out";
+                    if (swipeDirection === 'up') swipeClass = "translate-y-[-150%] opacity-0 scale-95 transition-all duration-300 ease-out";
+                  }
+
+                  const zIndex = isTop ? 30 : 20;
+                  const scaleOffset = isTop ? 1 : 0.95;
+                  const rotateOffset = isTop ? 0 : 3;
+                  const translateYOffset = isTop ? 0 : 8;
+
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`absolute inset-0 bg-slate-900 border border-white/10 rounded-[40px] p-2 overflow-hidden shadow-2xl flex flex-col justify-between transition-all duration-300 ${swipeClass}`}
+                      style={{
+                        zIndex,
+                        transform: !isTop ? `scale(${scaleOffset}) translateY(${translateYOffset}px) rotate(${rotateOffset}deg)` : undefined,
+                        opacity: isTop ? 1 : 0.6,
+                        pointerEvents: isTop ? 'auto' : 'none'
+                      }}
+                    >
+                      {/* Wireframe Mockup Visual */}
+                      <div className="flex-1 relative overflow-hidden rounded-[32px] opacity-70">
+                        <div className="absolute inset-0 overflow-hidden scale-[0.9] origin-center">
                           <div className="w-[300%] h-[300%] transform scale-[0.333] origin-top-left p-8">
                             <DynamicDashboard
                               uiConfig={layout}
@@ -203,34 +1077,55 @@ export default function AnalyzePage() {
                             />
                           </div>
                         </div>
+                      </div>
 
-                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-slate-950/40 backdrop-blur-md">
-                          <button
-                            onClick={() => handleSelect(idx)}
-                            disabled={refining}
-                            className="px-10 py-5 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-3xl transition-all shadow-2xl shadow-blue-600/40 uppercase tracking-widest text-xs flex items-center gap-3"
-                          >
-                            {refining && selectedIndex === idx ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-                            KONSEPTİ SEÇ
-                          </button>
+                      {/* Info overlay */}
+                      <div className="p-6 bg-slate-950/80 rounded-[32px] border border-white/5 space-y-2 relative z-45">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[9px] font-black text-blue-400 uppercase tracking-[0.3em]">Öneri {idx + 1} / {uiConfigs.length}</span>
+                          <h3 className="text-lg font-black text-white uppercase leading-tight">{layout.title || "Stratejik Analiz"}</h3>
                         </div>
+                        <p className="text-slate-400 text-xs leading-relaxed font-medium line-clamp-3">
+                          {layout.description || "Verilerinize uygun, kullanıcı dostu ve profesyonel bir veri görselleştirme stratejisi."}
+                        </p>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
 
-                    <div className="space-y-4 px-4">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Kavram {idx + 1}</span>
-                        <h3 className="text-xl font-black text-white leading-tight uppercase">{layout.title || "Stratejik Analiz"}</h3>
-                      </div>
-                      <p className="text-slate-400 text-sm leading-relaxed font-medium line-clamp-4">
-                        {layout.description || "Verilerine uygun, kullanıcı dostu ve profesyonel bir veri görselleştirme stratejisi."}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+              {/* Swipe Action Buttons */}
+              <div className="flex items-center justify-center gap-6 pt-4">
+                <button
+                  onClick={handleSwipeLeft}
+                  disabled={refining}
+                  className="w-16 h-16 bg-slate-900 hover:bg-rose-950/20 border border-rose-500/20 hover:border-rose-500/50 text-rose-500 rounded-full flex items-center justify-center transition-all shadow-lg active:scale-95 group"
+                  title="Beğenmedim (Sola Kaydır)"
+                >
+                  <ThumbsDown size={24} className="group-hover:scale-110 transition-transform" />
+                </button>
+
+                <button
+                  onClick={handleSwipeUp}
+                  disabled={refining}
+                  className="w-14 h-14 bg-slate-900 hover:bg-amber-950/20 border border-amber-500/20 hover:border-amber-500/50 text-amber-500 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 group"
+                  title="Fena Değil (Yukarı Kaydır)"
+                >
+                  <Smile size={20} className="group-hover:scale-110 transition-transform" />
+                </button>
+
+                <button
+                  onClick={handleSwipeRight}
+                  disabled={refining}
+                  className="w-16 h-16 bg-slate-900 hover:bg-emerald-950/20 border border-emerald-500/20 hover:border-emerald-500/50 text-emerald-500 rounded-full flex items-center justify-center transition-all shadow-lg active:scale-95 group"
+                  title="Beğendim! (Sağa Kaydır)"
+                >
+                  <Heart size={24} className="group-hover:scale-110 transition-transform" />
+                </button>
               </div>
             </div>
-          ) : (
+          )
+        ) : (
             <div className="flex flex-col lg:flex-row gap-8">
               {/* Main Dashboard Area */}
               <div className="flex-1 min-w-0">
@@ -247,18 +1142,89 @@ export default function AnalyzePage() {
                   </div>
 
                   <div className="flex items-center gap-4">
+                    
+                    <div className="flex bg-slate-900 border border-white/10 p-1 rounded-xl gap-1">
+                      <button
+                        onClick={() => setViewMode('grid')}
+                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                      >
+                        Izgara
+                      </button>
+                      <button
+                        onClick={() => setViewMode('list')}
+                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${viewMode === 'list' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                      >
+                        Liste
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => setAutoSyncGh(prev => !prev)}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border ${
+                        autoSyncGh
+                        ? 'bg-blue-600/15 border-blue-500/30 text-blue-400'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+                      }`}
+                      title="Her veri güncellemesinde otomatik olarak GitHub'a kaydet"
+                    >
+                      <GitBranch size={13} className={autoSyncGh ? "animate-pulse" : ""} />
+                      {autoSyncGh ? "Eşitleme: Açık" : "Canlı Eşitleme"}
+                    </button>
+
                     <button
                       onClick={() => setIsLocked(false)}
                       className="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold flex items-center gap-2 transition-all text-slate-400"
                     >
                       <Layout size={14} /> Tasarımı Değiştir
                     </button>
-                    <button
-                      onClick={handleExportJSON}
-                      className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20"
-                    >
-                      <Download size={14} /> Export
-                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowExportDropdown(!showExportDropdown)}
+                        className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20"
+                      >
+                        <Download size={14} /> Dışa Aktar
+                      </button>
+                      {showExportDropdown && (
+                        <div className="absolute right-0 mt-2 w-52 bg-slate-900/95 border border-white/10 rounded-2xl p-2 shadow-2xl backdrop-blur-xl z-50 animate-fadeIn animate-duration-150">
+                          <button
+                            onClick={() => {
+                              handleExportJSON();
+                              setShowExportDropdown(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-white/5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2"
+                          >
+                            Dashboard Config (JSON)
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleExportCSV();
+                              setShowExportDropdown(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-white/5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2"
+                          >
+                            Veri Seti (CSV)
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleExportExcel();
+                              setShowExportDropdown(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-white/5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2"
+                          >
+                            Excel Dosyası (XLSX)
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowGithubModal(true);
+                              setShowExportDropdown(false);
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-white/5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2 border-t border-white/5 mt-1 pt-2"
+                          >
+                            <GitBranch size={12} className="text-blue-400" /> GitHub Store
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -275,6 +1241,8 @@ export default function AnalyzePage() {
                       spreadsheetId={spreadsheetId}
                       mockMode={false}
                       metadata={metadata}
+                      viewMode={viewMode}
+                      activeRule={activeRule}
                     />
                   )}
                 </div>
@@ -283,37 +1251,271 @@ export default function AnalyzePage() {
               {/* Mascot Side Assistant */}
               <div className="w-full lg:w-[380px] flex flex-col gap-6 shrink-0">
                 <div className="glass-panel rounded-[32px] border-white/10 p-6 flex flex-col h-full sticky top-12">
-                  <div className="flex items-center justify-between mb-6">
+                  
+                  <div className="flex items-center justify-between mb-4 bg-slate-950/40 p-3 rounded-2xl border border-white/5">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
-                        <MessageSquare size={20} className="text-white" />
+                      <div className="w-10 h-10 bg-blue-600/10 border border-blue-500/20 rounded-xl flex items-center justify-center relative">
+                        <MessageSquare size={18} className="text-blue-400" />
+                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-slate-950 animate-pulse"></span>
                       </div>
                       <div>
-                        <h3 className="font-black text-sm uppercase tracking-tight text-white tracking-widest">Nova</h3>
-                        <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest animate-pulse">● Online</p>
+                        <h3 className="font-black text-xs uppercase tracking-tight text-white tracking-widest">Nova</h3>
+                        <p className="text-[9px] text-emerald-400 font-bold uppercase tracking-widest">● Çevrimiçi</p>
                       </div>
                     </div>
+                    
+                    <button 
+                      onClick={() => {
+                        const muted = !isMuted;
+                        setIsMuted(muted);
+                        if (muted) {
+                          Voice.stop();
+                        } else {
+                          Voice.speak(mascotChat);
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${isMuted ? 'bg-slate-900 border-white/10 text-slate-400 hover:text-white' : 'bg-blue-600/10 border-blue-500/20 text-blue-400'}`}
+                    >
+                      {isMuted ? "🔇 Sesi Aç" : "🔊 Ses Açık"}
+                    </button>
                   </div>
 
                   {!expertRequested ? (
                     <button
                       onClick={handleDelegateExpert}
-                      className="w-full mb-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 shadow-xl shadow-blue-600/30 group"
+                      className="w-full mb-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 shadow-xl shadow-blue-600/30 group"
                     >
-                      <UserCheck size={18} className="group-hover:scale-110 transition-transform" /> Uzman Desteği
+                      <UserCheck size={16} className="group-hover:scale-110 transition-transform" /> Uzman Desteği
                     </button>
                   ) : (
-                    <div className="w-full mb-6 py-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[10px] text-emerald-400 font-bold text-center uppercase tracking-widest flex items-center justify-center gap-2">
-                      <CheckCircle size={14} /> Uzman Talebi Alındı
+                    <div className="w-full mb-4 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[9px] text-emerald-400 font-bold text-center uppercase tracking-widest flex items-center justify-center gap-2">
+                      <CheckCircle size={12} /> Uzman Talebi Alındı
                     </div>
                   )}
 
-
-                  <div className="flex-1 bg-white/5 rounded-2xl p-4 border border-white/5 mb-6">
-                    <p className="text-sm leading-relaxed text-slate-200 font-medium italic">
+                  <div className="bg-white/5 rounded-2xl p-4 border border-white/5 mb-4">
+                    <p className="text-xs leading-relaxed text-slate-200 font-medium italic">
                       "{mascotChat}"
                     </p>
                   </div>
+
+                  {/* Multi-source Merge Component */}
+                  <div className="bg-white/5 rounded-2xl p-4 border border-white/5 mb-4 space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <GitBranch size={12} className="text-emerald-400" />
+                      <h4 className="text-[9px] font-black uppercase tracking-wider text-slate-300">Çoklu Veri Birleştir (Merge)</h4>
+                    </div>
+                    <p className="text-[9px] text-slate-400 font-medium leading-normal">
+                      İlk sütunu (Key) eşleştirerek mevcut tabloya yeni bir CSV veya Excel dosyası birleştirin.
+                    </p>
+                    <label className="block">
+                      <div className="w-full py-2.5 bg-slate-950/40 border border-white/5 hover:border-emerald-500/30 rounded-xl text-center cursor-pointer transition-all text-[10px] font-black uppercase tracking-wider text-slate-300 hover:text-white">
+                        📁 İkinci Dosyayı Yükle
+                      </div>
+                      <input 
+                        type="file" 
+                        accept=".csv,.xlsx,.xls" 
+                        onChange={handleMergeSource} 
+                        className="hidden" 
+                      />
+                    </label>
+                  </div>
+
+                  {/* Dynamic Rule Editor */}
+                  <div className="bg-white/5 rounded-2xl p-4 border border-white/5 mb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sliders size={14} className="text-blue-400" />
+                        <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-300">LLM Kural Motoru</h4>
+                      </div>
+                      {activeRule && (
+                        <button
+                          onClick={() => {
+                            setActiveRule(null);
+                            setRuleInput('');
+                          }}
+                          className="text-[9px] font-bold text-rose-400 hover:text-rose-300 uppercase tracking-widest"
+                        >
+                          Temizle
+                        </button>
+                      )}
+                    </div>
+                    
+                    <form onSubmit={handleApplyRule} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={ruleInput}
+                        onChange={(e) => setRuleInput(e.target.value)}
+                        placeholder="Örn: Miktar 1000'den büyükse kırmızı yap"
+                        className="flex-1 bg-slate-950/40 border border-white/5 rounded-xl px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/30 transition-all placeholder:text-slate-600"
+                        disabled={parsingRule}
+                      />
+                      <button
+                        type="submit"
+                        disabled={parsingRule}
+                        className="px-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center shrink-0"
+                      >
+                        {parsingRule ? <Loader2 size={12} className="animate-spin" /> : "Uygula"}
+                      </button>
+                    </form>
+                    {activeRule && (
+                      <div className="text-[9px] text-slate-400 font-medium bg-slate-950/60 p-2 rounded-lg border border-white/5 flex items-center justify-between">
+                        <span>Aktif Filtre: <strong className="text-blue-400">{activeRule.targetColumn}</strong> {activeRule.operator} {activeRule.value}</span>
+                        <span className="text-emerald-400 font-bold uppercase tracking-wider text-[8px]">{activeRule.action}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tab Switcher */}
+                  <div className="flex bg-slate-950/40 p-1 rounded-xl border border-white/5 mb-4">
+                    <button
+                      onClick={() => setSidebarTab('insights')}
+                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${sidebarTab === 'insights' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      İçgörüler
+                    </button>
+                    <button
+                      onClick={() => setSidebarTab('swot')}
+                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${sidebarTab === 'swot' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      SWOT
+                    </button>
+                    <button
+                      onClick={() => setSidebarTab('benchmark')}
+                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${sidebarTab === 'benchmark' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      Benchmark
+                    </button>
+                  </div>
+
+                  {sidebarTab === 'insights' && (
+                    <>
+                      {loadingInsights && (
+                        <div className="bg-white/5 rounded-2xl p-4 border border-white/5 mb-4 flex items-center justify-center gap-2">
+                          <Loader2 size={16} className="animate-spin text-blue-500" />
+                          <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">AI İçgörüler Üretiliyor...</span>
+                        </div>
+                      )}
+
+                      {!loadingInsights && insights && insights.length > 0 && (
+                        <div className="mb-4 space-y-3 bg-white/5 rounded-2xl p-4 border border-white/5 max-h-[250px] overflow-y-auto custom-scrollbar">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Sparkles size={14} className="text-yellow-400" />
+                            <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-300">AI Analiz İçgörüleri</h4>
+                          </div>
+                          <div className="space-y-2">
+                            {insights.map((insight, idx) => {
+                              let typeColor = "text-blue-400 bg-blue-500/10 border-blue-500/20";
+                              if (insight.type === "risk" || insight.type === "warning") {
+                                typeColor = "text-rose-400 bg-rose-500/10 border-rose-500/20";
+                              } else if (insight.type === "opportunity") {
+                                typeColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+                              } else if (insight.type === "trend") {
+                                typeColor = "text-violet-400 bg-violet-500/10 border-violet-500/20";
+                              }
+                              
+                              return (
+                                <div key={idx} className="p-3 bg-slate-950/40 border border-white/5 rounded-xl space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-white leading-tight">{insight.title}</span>
+                                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${typeColor} shrink-0`}>
+                                      {insight.type}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-400 leading-relaxed font-medium">{insight.text}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {sidebarTab === 'swot' && (
+                    <div className="mb-4 space-y-4">
+                      {loadingSwot && (
+                        <div className="bg-white/5 rounded-2xl p-4 border border-white/5 flex items-center justify-center gap-2">
+                          <Loader2 size={16} className="animate-spin text-blue-500" />
+                          <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">SWOT Analizi Üretiliyor...</span>
+                        </div>
+                      )}
+                      {!loadingSwot && swot && (
+                        <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                          <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-1">
+                            <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">💪 Güçlü</span>
+                            <ul className="text-[9px] text-slate-300 list-disc list-inside space-y-1">
+                              {swot.strengths?.map((item, idx) => <li key={idx} className="leading-tight">{item}</li>)}
+                            </ul>
+                          </div>
+                          <div className="p-3 bg-rose-500/5 border border-rose-500/20 rounded-xl space-y-1">
+                            <span className="text-[10px] font-black uppercase text-rose-400 tracking-wider">⚠️ Zayıf</span>
+                            <ul className="text-[9px] text-slate-300 list-disc list-inside space-y-1">
+                              {swot.weaknesses?.map((item, idx) => <li key={idx} className="leading-tight">{item}</li>)}
+                            </ul>
+                          </div>
+                          <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-1">
+                            <span className="text-[10px] font-black uppercase text-blue-400 tracking-wider">🚀 Fırsat</span>
+                            <ul className="text-[9px] text-slate-300 list-disc list-inside space-y-1">
+                              {swot.opportunities?.map((item, idx) => <li key={idx} className="leading-tight">{item}</li>)}
+                            </ul>
+                          </div>
+                          <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1">
+                            <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider">⚡ Tehdit</span>
+                            <ul className="text-[9px] text-slate-300 list-disc list-inside space-y-1">
+                              {swot.threats?.map((item, idx) => <li key={idx} className="leading-tight">{item}</li>)}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {sidebarTab === 'benchmark' && (
+                    <div className="mb-4 space-y-3">
+                      {loadingBenchmark && (
+                        <div className="bg-white/5 rounded-2xl p-4 border border-white/5 flex items-center justify-center gap-2">
+                          <Loader2 size={16} className="animate-spin text-blue-500" />
+                          <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Benchmark Üretiliyor...</span>
+                        </div>
+                      )}
+                      {!loadingBenchmark && benchmark && benchmark.length > 0 && (
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                          {benchmark.map((item, idx) => {
+                            let statusColor = "text-blue-400 bg-blue-500/10 border-blue-500/20";
+                            if (item.status === "danger") {
+                                statusColor = "text-rose-400 bg-rose-500/10 border-rose-500/20";
+                            } else if (item.status === "warning") {
+                                statusColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+                            } else if (item.status === "success") {
+                                statusColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+                            }
+                            return (
+                              <div key={idx} className="p-3 bg-slate-950/40 border border-white/5 rounded-xl space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-black text-white">{item.metric}</span>
+                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${statusColor}`}>
+                                    {item.status}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-center bg-white/5 p-2 rounded-lg border border-white/5">
+                                  <div>
+                                    <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Mevcut</div>
+                                    <div className="text-sm font-black text-white">{item.value}</div>
+                                  </div>
+                                  <div className="border-l border-white/5">
+                                    <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Benchmark</div>
+                                    <div className="text-xs font-black text-blue-400 mt-0.5 truncate">{item.benchmark}</div>
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-normal font-medium">{item.analysis}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <form onSubmit={handleRefine} className="flex gap-2">
                     <input
@@ -323,6 +1525,14 @@ export default function AnalyzePage() {
                       placeholder="Hızlı revize iste..."
                       className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-blue-500/50 transition-all"
                     />
+                    <button
+                      type="button"
+                      onClick={handleVoiceListenRefine}
+                      className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all shrink-0 ${isListening ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse' : 'bg-slate-900 border-white/10 text-slate-400 hover:text-white'}`}
+                      title="Sesli Komut Ver"
+                    >
+                      {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                    </button>
                     <button type="submit" className="w-12 h-12 bg-blue-600 hover:bg-blue-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-600/20 transition-all shrink-0">
                       <Send size={18} />
                     </button>
@@ -366,9 +1576,13 @@ export default function AnalyzePage() {
           )}
 
           {step === 'analyzing' && (
-            <div className="py-10 animate-pulse">
-              <Loader2 size={64} className="animate-spin text-blue-500 mx-auto mb-6" />
-              <h2 className="text-2xl font-bold text-white mb-2">Analiz Ediliyor</h2>
+            <div className="space-y-6 w-full max-w-4xl mx-auto animate-fadeIn">
+              <div className="text-center mb-6">
+                <Loader2 size={40} className="animate-spin text-blue-500 mx-auto mb-3" />
+                <h2 className="text-xl font-black text-white tracking-widest uppercase">Veriler Analiz Ediliyor</h2>
+                <p className="text-xs text-slate-400 font-semibold mt-1">Matris boyutları hesaplanıyor ve şablonlar eşleştiriliyor...</p>
+              </div>
+              <DashboardSkeleton />
             </div>
           )}
 
@@ -383,9 +1597,39 @@ export default function AnalyzePage() {
                 <InfoCard label="Satır" value={metadata.rowCount} icon={<Layers size={14} />} />
                 <InfoCard label="Sütun" value={metadata.headers.length} icon={<Columns size={14} />} />
               </div>
+
+
+
               <div className="space-y-3">
                 <label className="block text-sm font-bold text-slate-400 ml-1">Dashboard Talimatı</label>
                 <textarea className="w-full h-32 bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-all resize-none" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Örn: Satışları analiz et..." />
+                
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider ml-1">Önerilen Promptlar:</span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPrompt("Koyu Lacivert temalı, modern cam efektli lüks bir satış paneli tasarla")}
+                      className="px-3 py-1.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] text-slate-300 hover:text-white hover:border-blue-500/30 transition-all font-semibold"
+                    >
+                      ✨ Koyu Lacivert & Cam Efekti
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrompt("Neon yeşil detayları olan, sade ve profesyonel bir finans kokpiti oluştur")}
+                      className="px-3 py-1.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] text-slate-300 hover:text-white hover:border-emerald-500/30 transition-all font-semibold"
+                    >
+                      🟢 Neon Yeşil Finans Kokpiti
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrompt("Performans odaklı, yüksek kontrastlı ve kart bazlı bir yönetici raporu oluştur")}
+                      className="px-3 py-1.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] text-slate-300 hover:text-white hover:border-purple-500/30 transition-all font-semibold"
+                    >
+                      📊 Performans Odaklı Yönetici
+                    </button>
+                  </div>
+                </div>
               </div>
               <button onClick={handleGenerateDashboard} disabled={generating} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-emerald-600/20 flex items-center justify-center gap-3 text-lg">
                 {generating ? <Loader2 size={24} className="animate-spin" /> : <Sparkles size={24} />}
@@ -395,9 +1639,13 @@ export default function AnalyzePage() {
           )}
 
           {step === 'generating' && (
-            <div className="py-10">
-              <Loader2 size={64} className="animate-spin text-blue-500 mx-auto mb-6" />
-              <h2 className="text-2xl font-bold text-white mb-2">AI Tasarlıyor</h2>
+            <div className="space-y-6 w-full max-w-4xl mx-auto animate-fadeIn">
+              <div className="text-center mb-6">
+                <Loader2 size={40} className="animate-spin text-blue-500 mx-auto mb-3" />
+                <h2 className="text-xl font-black text-white tracking-widest uppercase">AI Dashboard Tasarlıyor</h2>
+                <p className="text-xs text-slate-400 font-semibold mt-1">Veri setindeki değişkenler analiz ediliyor ve arayüz çiziliyor...</p>
+              </div>
+              <DashboardSkeleton />
             </div>
           )}
 
@@ -406,6 +1654,123 @@ export default function AnalyzePage() {
               <AlertCircle size={64} className="text-rose-500 mx-auto mb-6" />
               <p className="text-rose-400 text-sm mb-8 font-medium">{error}</p>
               <button onClick={() => setStep('idle')} className="px-8 py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition-all">Tekrar Dene</button>
+            </div>
+          )}
+
+          {showGithubModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/80 backdrop-blur-md animate-fadeIn">
+              <div className="glass-panel w-full max-w-md p-8 rounded-[32px] border-white/10 shadow-2xl relative space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center border border-white/10">
+                      <GitBranch size={20} className="text-blue-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black uppercase tracking-widest text-white">GitHub Store</h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Veriyi Repoya Gönder</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowGithubModal(false)}
+                    className="text-slate-400 hover:text-white transition-all text-xs font-black uppercase tracking-wider"
+                  >
+                    Kapat
+                  </button>
+                </div>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3 text-[10px] text-amber-400 font-medium leading-normal space-y-1">
+                  <p className="font-black flex items-center gap-1.5">⚠️ Repo Erişim Uyarısı:</p>
+                  <p>Yalnızca <strong>kendi yazma izninizin olduğu</strong> depolara veri gönderebilirsiniz. Başkasının deposuna (örn: seyyah/sheet-canvas) yazamazsınız. Sunumda sorunsuz göstermek için sağ taraftaki <strong>"Simüle Et (Demo)"</strong> butonunu kullanabilirsiniz.</p>
+                </div>
+
+                <form onSubmit={handleCommitToGithub} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[9px] uppercase tracking-wider font-black text-slate-400">Personal Access Token (PAT)</label>
+                    <input 
+                      type="password" 
+                      value={githubSettings.token}
+                      onChange={(e) => setGithubSettings({...githubSettings, token: e.target.value})}
+                      placeholder="ghp_..."
+                      className="w-full bg-slate-950/40 border border-white/5 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500/30 transition-all"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase tracking-wider font-black text-slate-400">Repo Sahibi (Owner)</label>
+                      <input 
+                        type="text" 
+                        value={githubSettings.owner}
+                        onChange={(e) => setGithubSettings({...githubSettings, owner: e.target.value})}
+                        placeholder="Örn: github_user"
+                        className="w-full bg-slate-950/40 border border-white/5 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500/30 transition-all"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase tracking-wider font-black text-slate-400">Repo Adı</label>
+                      <input 
+                        type="text" 
+                        value={githubSettings.repo}
+                        onChange={(e) => setGithubSettings({...githubSettings, repo: e.target.value})}
+                        placeholder="Örn: my-dataset-repo"
+                        className="w-full bg-slate-950/40 border border-white/5 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500/30 transition-all"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] uppercase tracking-wider font-black text-slate-400">Dosya Yolu (Path)</label>
+                    <input 
+                      type="text" 
+                      value={githubSettings.path}
+                      onChange={(e) => setGithubSettings({...githubSettings, path: e.target.value})}
+                      placeholder="data/dataset.csv"
+                      className="w-full bg-slate-950/40 border border-white/5 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500/30 transition-all"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] uppercase tracking-wider font-black text-slate-400">Commit Mesajı</label>
+                    <input 
+                      type="text" 
+                      value={githubSettings.message}
+                      onChange={(e) => setGithubSettings({...githubSettings, message: e.target.value})}
+                      className="w-full bg-slate-950/40 border border-white/5 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500/30 transition-all"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="submit"
+                      disabled={committingGh}
+                      className="flex-1 py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-600/30"
+                    >
+                      {committingGh ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        "Commit Et (Real)"
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSimulateCommitToGithub}
+                      disabled={committingGh}
+                      className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl shadow-emerald-600/30"
+                    >
+                      {committingGh ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        "Simüle Et (Demo)"
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
         </div>
@@ -422,6 +1787,42 @@ function InfoCard({ label, value, icon }) {
         <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
       </div>
       <div className="text-white font-black text-lg truncate w-full">{value}</div>
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="w-full space-y-6 animate-pulse p-2 text-left">
+      <div className="grid grid-cols-3 gap-6">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-slate-900/60 border border-white/5 rounded-3xl p-6 h-28 space-y-3">
+            <div className="h-3 bg-slate-800 rounded-full w-24"></div>
+            <div className="h-8 bg-slate-800 rounded-full w-32"></div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-12 gap-6">
+        <div className="col-span-8 bg-slate-900/60 border border-white/5 rounded-3xl p-6 h-64 space-y-4">
+          <div className="h-4 bg-slate-800 rounded-full w-40"></div>
+          <div className="h-full bg-slate-800/20 rounded-2xl w-full flex items-end justify-between p-4 pt-12">
+            {[40, 70, 45, 90, 60, 80, 50, 65, 35, 75].map((h, i) => (
+              <div key={i} className="w-6 bg-slate-800/80 rounded-t-lg" style={{ height: `${h}%` }}></div>
+            ))}
+          </div>
+        </div>
+        <div className="col-span-4 bg-slate-900/60 border border-white/5 rounded-3xl p-6 h-64 space-y-6">
+          <div className="h-4 bg-slate-800 rounded-full w-24"></div>
+          <div className="space-y-4">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="flex justify-between items-center">
+                <div className="h-3 bg-slate-800 rounded-full w-20"></div>
+                <div className="h-3 bg-slate-800 rounded-full w-12"></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
