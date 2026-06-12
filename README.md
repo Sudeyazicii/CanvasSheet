@@ -18,7 +18,7 @@ Canvas Sheet, Google Sheets, Excel veya CSV verilerinizi saniyeler içinde benze
 
 <br />
 
-**🎥 Canvas Sheet MVP Demo İzle:** [https://www.youtube.com/watch?v=XdQJRQ1bfrY](https://www.youtube.com/watch?v=XdQJRQ1bfrY)
+**🎥 Canvas Sheet MVP Demo İzle:** [https://www.youtube.com/watch?v=lNZAgusLeok](https://www.youtube.com/watch?v=lNZAgusLeok)
 
 </div>
 
