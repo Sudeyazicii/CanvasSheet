@@ -2,14 +2,14 @@ import { generateDashboardConfig as generateWithOpenAI, isOpenAIConfigured } fro
 import { generateDashboardConfig as generateWithGroq, isGroqConfigured } from './groqService.js';
 import { generateDashboardConfig as generateWithPollinations } from './pollinationsService.js';
 import { buildSystemPrompt } from './dashboardPrompt.js';
-import { kaggleDashboardDataset } from '../data/kaggleDashboardDataset.js';
+import { canvasVisionTemplates } from '../data/canvasTemplates.js';
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY?.trim();
 const ENV_MODEL = import.meta.env.VITE_GEMINI_MODEL?.trim() || "gemini-1.5-flash";
 const AI_PROVIDER = import.meta.env.VITE_AI_PROVIDER?.trim().toLowerCase() || "gemini";
 
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY?.trim();
-const GROQ_MODEL = import.meta.env.VITE_GROQ_MODEL?.trim() || "llama-3.3-70b-versatile";
+const GROQ_MODEL = import.meta.env.VITE_GROQ_MODEL?.trim() || "openai/gpt-oss-20b";
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY?.trim();
 const OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
@@ -20,17 +20,111 @@ const providerStatus = {
   openai: true
 };
 
+function resolveGeminiModels(envModel) {
+  const models = [];
+  const validGeminiModels = ['gemini-2.5-flash-lite', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
+  if (envModel && validGeminiModels.includes(envModel)) {
+    models.push(envModel);
+  }
+  models.push('gemini-2.5-flash-lite', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash');
+  return [...new Set(models)].filter(Boolean);
+}
+
+function repairAndParseJson(str, isArray = false) {
+  if (!str || typeof str !== 'string') return null;
+
+  // 1. Clean reasoning tags like <think>...</think>
+  let cleaned = str.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // 2. Direct JSON parse
+  try {
+    const res = JSON.parse(cleaned);
+    if (res && typeof res === 'object') return res;
+  } catch (e) { }
+
+  // 3. Extract JSON code fences ```json ... ```
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      const res = JSON.parse(codeBlockMatch[1].trim());
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      cleaned = codeBlockMatch[1].trim();
+    }
+  }
+
+  // 4. Extract first {...} or [...] substring
+  const pattern = isArray ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
+  const match = cleaned.match(pattern);
+  if (match) {
+    try {
+      const res = JSON.parse(match[0].trim());
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      cleaned = match[0].trim();
+    }
+  }
+
+  // 5. Advanced bracket balancing repair
+  let repaired = cleaned.replace(/,\s*$/, '').replace(/,\s*"[^"]*":?\s*$/, '');
+  let quoteCount = 0;
+  let escaped = false;
+  for (let i = 0; i < repaired.length; i++) {
+    if (escaped) { escaped = false; continue; }
+    if (repaired[i] === '\\') { escaped = true; continue; }
+    if (repaired[i] === '"') quoteCount++;
+  }
+  if (quoteCount % 2 !== 0) repaired += '"';
+
+  const stack = [];
+  escaped = false;
+  let inStr = false;
+  for (let i = 0; i < repaired.length; i++) {
+    const char = repaired[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (char === '"') { inStr = !inStr; continue; }
+    if (!inStr) {
+      if (char === '{' || char === '[') stack.push(char);
+      else if (char === '}' && stack[stack.length - 1] === '{') stack.pop();
+      else if (char === ']' && stack[stack.length - 1] === '[') stack.pop();
+    }
+  }
+
+  let closing = '';
+  for (let i = stack.length - 1; i >= 0; i--) {
+    closing += stack[i] === '{' ? '}' : ']';
+  }
+
+  try {
+    const res = JSON.parse(repaired + closing);
+    if (res && typeof res === 'object') return res;
+  } catch (e1) {
+    const lastBrace = isArray ? repaired.lastIndexOf(']') : repaired.lastIndexOf('}');
+    if (lastBrace !== -1) {
+      let sub = repaired.slice(0, lastBrace + 1);
+      try {
+        const res = JSON.parse(sub);
+        if (res && typeof res === 'object') return res;
+      } catch (e2) { }
+    }
+  }
+
+  return null;
+}
+
 /**
  * Generic multi-provider structured data generator.
- * Tries Gemini first, then falls back to Groq and OpenAI if API keys are available.
+ * Tries Gemini first if key exists, then falls back to Groq and OpenAI.
  */
 async function generateStructuredData(systemPrompt, userPrompt, isArray = false) {
-  // 1. Try Gemini
-  if (GEMINI_API_KEY) {
-    let availableModels = [ENV_MODEL, "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"];
+  // 1. Try Gemini FIRST if configured
+  if (GEMINI_API_KEY && GEMINI_API_KEY !== 'undefined' && AI_PROVIDER !== 'groq') {
+    let availableModels = resolveGeminiModels(ENV_MODEL);
     for (const modelName of availableModels) {
       for (const apiVersion of ['v1beta', 'v1']) {
         try {
+          console.log(`🚀 [Gemini] Structured data deneniyor: ${modelName} (${apiVersion})`);
           const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
           const isV1 = apiVersion === 'v1';
           const requestBody = {
@@ -52,57 +146,25 @@ async function generateStructuredData(systemPrompt, userPrompt, isArray = false)
           if (response.ok) {
             const data = await response.json();
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            const regex = isArray ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
-            const jsonMatch = text?.match(regex);
-            if (jsonMatch) {
-              return JSON.parse(jsonMatch[0].trim());
+            if (text) {
+              const parsed = repairAndParseJson(text, isArray);
+              if (parsed) {
+                console.log(`✅ [Gemini] Structured data BAŞARILI: ${modelName}`);
+                return parsed;
+              }
             }
           }
         } catch (e) {
-          console.warn(`Gemini (${modelName}/${apiVersion}) structured data attempt failed:`, e.message);
+          console.warn(`⚠️ [Gemini] (${modelName}/${apiVersion}) denemesi başarısız:`, e.message);
         }
       }
     }
   }
 
-  // 2. Try Groq Fallback
-  if (GROQ_API_KEY) {
+  // 2. Try OpenAI / ChatGPT Fallback
+  if (OPENAI_API_KEY && providerStatus.openai) {
     try {
-      console.log("🚀 [Fallback Engine] Groq ile veri analizi deneniyor...");
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.5,
-          response_format: { type: 'json_object' }
-        })
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content;
-        const regex = isArray ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
-        const jsonMatch = text?.match(regex);
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0].trim());
-        }
-      }
-    } catch (e) {
-      console.warn("Groq structured data fallback failed:", e.message);
-    }
-  }
-
-  // 3. Try OpenAI Fallback
-  if (OPENAI_API_KEY) {
-    try {
-      console.log("🚀 [Fallback Engine] OpenAI ile veri analizi deneniyor...");
+      console.log("🚀 [OpenAI / ChatGPT] Data analizi deneniyor...");
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -122,14 +184,56 @@ async function generateStructuredData(systemPrompt, userPrompt, isArray = false)
       if (response.ok) {
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content;
-        const regex = isArray ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
-        const jsonMatch = text?.match(regex);
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0].trim());
+        const parsed = repairAndParseJson(text, isArray);
+        if (parsed) {
+          console.log("✅ [OpenAI / ChatGPT] Data analizi BAŞARILI");
+          return parsed;
         }
       }
     } catch (e) {
-      console.warn("OpenAI structured data fallback failed:", e.message);
+      console.warn("⚠️ [OpenAI / ChatGPT] Hata:", e.message);
+    }
+  }
+
+  // 3. Try Groq Fallback with model rotation
+  if (GROQ_API_KEY && providerStatus.groq) {
+    const groqModelsToTry = [...new Set([GROQ_MODEL, 'groq/compound', 'groq/compound-mini', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.6-27b'])];
+    for (let idx = 0; idx < groqModelsToTry.length; idx++) {
+      const gModel = groqModelsToTry[idx];
+      try {
+        console.log(`🚀 [Groq Model ${idx + 1}/${groqModelsToTry.length}] Data analizi deneniyor: ${gModel}`);
+        const safeUserPrompt = userPrompt && userPrompt.length > 2500 ? userPrompt.slice(0, 2500) + "\n...[truncated]" : userPrompt;
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: gModel,
+            messages: [
+              { role: 'system', content: systemPrompt + "\nRespond with valid JSON." },
+              { role: 'user', content: safeUserPrompt + "\nFormat as JSON." }
+            ],
+            temperature: 0.3,
+            max_tokens: 4096
+          })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text) {
+            const parsed = repairAndParseJson(text, isArray);
+            if (parsed) {
+              console.log(`✅ [Groq Model ${idx + 1}/${groqModelsToTry.length}] Data analizi BAŞARILI: ${gModel}`);
+              return parsed;
+            }
+          }
+        }
+        console.warn(`⚠️ [Groq Model ${idx + 1}/${groqModelsToTry.length}] ${gModel} yanıt verdi fakat geçerli JSON üretilemedi. Sonraki modele geçiliyor...`);
+      } catch (e) {
+        console.warn(`⚠️ [Groq Model ${idx + 1}/${groqModelsToTry.length}] ${gModel} hatası (${e.message}). Sonraki modele geçiliyor...`);
+      }
     }
   }
 
@@ -137,100 +241,65 @@ async function generateStructuredData(systemPrompt, userPrompt, isArray = false)
 }
 
 export async function generateDashboardConfig(metadataPrompt, userRequest, styleModifier = "") {
-  if (AI_PROVIDER === "openai") {
-    console.log("🎯 [AI Engine] VITE_AI_PROVIDER=openai → Gemini atlanıyor, doğrudan OpenAI kullanılıyor");
-    return generateWithOpenAI(metadataPrompt, userRequest, styleModifier);
-  }
-
-  let availableModels = [ENV_MODEL, "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"];
-
-  try {
-    console.log("🔍 [AI Engine] Kullanılabilir modeller taranıyor...");
-    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`;
-    const listRes = await fetch(listUrl);
-
-    if (listRes.ok) {
-      const listData = await listRes.json();
-      if (listData.models && listData.models.length > 0) {
-        const discovered = listData.models
-          .filter(m => m.supportedGenerationMethods.includes("generateContent"))
-          .map(m => m.name.split('/').pop());
-        availableModels = [...new Set([ENV_MODEL, ...discovered])].filter(Boolean);
-      }
-    } else {
-      console.warn(`⚠️ [AI Engine] Liste alınamadı (HTTP ${listRes.status}). Varsayılan modeller kullanılacak.`);
-    }
-  } catch (e) {
-    console.warn("⚠️ [AI Engine] Liste hatası:", e.message);
-  }
-
-  if (availableModels.length === 0) {
-    availableModels = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-2.0-flash'];
-  }
-
-  const SYSTEM_PROMPT = buildSystemPrompt(styleModifier);
   let lastError = null;
 
-  for (const modelName of availableModels) {
-    for (const apiVersion of ['v1beta', 'v1']) {
-      try {
-        console.log(`🚀 [AI Engine] Deneniyor: ${modelName} (${apiVersion})`);
-        const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+  // 1. ÖNCELİK: Gemini Modellerini Tek Tek Dene
+  if (GEMINI_API_KEY && GEMINI_API_KEY !== 'undefined' && providerStatus.gemini) {
+    let availableModels = resolveGeminiModels(ENV_MODEL);
+    const SYSTEM_PROMPT = buildSystemPrompt(styleModifier);
 
-        const isV1 = apiVersion === 'v1';
-        const requestBody = {
-          contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\n\nREQUEST: ${userRequest}\n\nMETADATA:\n${metadataPrompt}\n\nRANDOM_SEED: ${Math.random()}\n\nReturn ONLY valid JSON.` }] }],
-          generationConfig: {
-            temperature: 0.7
+    for (let idx = 0; idx < availableModels.length; idx++) {
+      const modelName = availableModels[idx];
+      for (const apiVersion of ['v1beta', 'v1']) {
+        try {
+          console.log(`🚀 [Gemini Model ${idx + 1}/${availableModels.length}] Deneniyor: ${modelName} (${apiVersion})`);
+          const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+
+          const isV1 = apiVersion === 'v1';
+          const requestBody = {
+            contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\n\nREQUEST: ${userRequest}\n\nMETADATA:\n${metadataPrompt}\n\nRANDOM_SEED: ${Math.random()}\n\nReturn ONLY valid JSON.` }] }],
+            generationConfig: {
+              temperature: 0.7
+            }
+          };
+          if (!isV1) {
+            requestBody.generationConfig.response_mime_type = "application/json";
           }
-        };
-        if (!isV1) {
-          requestBody.generationConfig.response_mime_type = "application/json";
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) {
+              const parsed = repairAndParseJson(text, false);
+              if (parsed && typeof parsed === 'object') {
+                console.log(`✅ [Gemini Model ${idx + 1}/${availableModels.length}] BAŞARILI: ${modelName} (${apiVersion})`);
+                return parsed;
+              }
+            }
+          } else {
+            const err = await response.json().catch(() => ({}));
+            lastError = err.error?.message || `HTTP ${response.status}`;
+            console.warn(`⚠️ [Gemini Model ${idx + 1}/${availableModels.length}] ${modelName} (${apiVersion}) başarısız: ${lastError}`);
+            if (response.status === 403 || response.status === 429) {
+              providerStatus.gemini = false;
+            }
+          }
+        } catch (e) {
+          lastError = e.message;
         }
-
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          const jsonMatch = text?.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            console.log(`✅ [AI Engine] Gemini Başarılı: ${modelName} (${apiVersion})`);
-            return JSON.parse(jsonMatch[0].trim());
-          }
-        } else {
-          const err = await response.json().catch(() => ({}));
-          lastError = err.error?.message || `HTTP ${response.status}`;
-          console.warn(`⚠️ [AI Engine] Gemini ${modelName} (${apiVersion}) başarısız: ${lastError}`);
-          if (response.status === 403 || response.status === 429) {
-            providerStatus.gemini = false;
-          }
-        }
-      } catch (e) {
-        lastError = e.message;
       }
     }
   }
 
-  if (isGroqConfigured() && providerStatus.groq) {
-    console.warn(`⚠️ [AI Engine] Gemini devre dışı veya başarısız. Groq deneniyor...`);
-    try {
-      return await generateWithGroq(metadataPrompt, userRequest, styleModifier);
-    } catch (groqError) {
-      console.warn(`⚠️ [AI Engine] Groq başarısız: ${groqError.message}`);
-      if (groqError.message.includes('401') || groqError.message.includes('429')) {
-        providerStatus.groq = false;
-      }
-      lastError = `Gemini: ${lastError} | Groq: ${groqError.message}`;
-    }
-  }
-
+  // 2. ÖNCELİK: ChatGPT / OpenAI Modelleri
   if (isOpenAIConfigured() && providerStatus.openai) {
-    console.warn(`⚠️ [AI Engine] Groq devre dışı veya başarısız. OpenAI deneniyor...`);
+    console.warn(`⚠️ [AI Engine] Gemini başarısız veya devredışı → OpenAI / ChatGPT deneniyor...`);
     try {
       return await generateWithOpenAI(metadataPrompt, userRequest, styleModifier);
     } catch (openaiError) {
@@ -242,7 +311,22 @@ export async function generateDashboardConfig(metadataPrompt, userRequest, style
     }
   }
 
-  console.warn(`⚠️ [AI Engine] Kritik seviye: Pollinations Architect devreye giriyor...`);
+  // 3. ÖNCELİK: Groq Modelleri Cascade
+  if (isGroqConfigured() && providerStatus.groq) {
+    console.warn(`⚠️ [AI Engine] OpenAI başarısız veya devredışı → Groq model zinciri çalıştırılıyor...`);
+    try {
+      return await generateWithGroq(metadataPrompt, userRequest, styleModifier);
+    } catch (groqError) {
+      console.warn(`⚠️ [AI Engine] Groq zinciri tamamlandı: ${groqError.message}`);
+      if (groqError.message.includes('401') || groqError.message.includes('429')) {
+        providerStatus.groq = false;
+      }
+      lastError = `Gemini: ${lastError || 'N/A'} | Groq: ${groqError.message}`;
+    }
+  }
+
+  // 4. ÖNCELİK: Pollinations Architect
+  console.warn(`⚠️ [AI Engine] Son Çare: Pollinations Architect devreye giriyor...`);
   try {
     return await generateWithPollinations(metadataPrompt, userRequest, styleModifier);
   } catch (pollError) {
@@ -262,7 +346,10 @@ CRITICAL MISSION: The user has selected a specific layout concept. You MUST fill
 
 SELECTED CONCEPT:
 Title: ${selectedLayout.title}
+Category: ${selectedLayout.category || 'Analiz'}
 Description: ${selectedLayout.description}
+Academic Vision Instruction: ${selectedLayout.akademikPrompt || ''}
+Target UI Schema & Charts: ${JSON.stringify(selectedLayout.jsonUiSchema || {})}
 
 GRID LAYOUT SHELL (MANDATORY):
 ${JSON.stringify(layoutShell, null, 2)}
@@ -270,83 +357,52 @@ ${JSON.stringify(layoutShell, null, 2)}
 INSTRUCTIONS:
 1. OPTIMIZE THE GRID: You MUST output exactly ${layoutShell.length} widgets. Use the GRID LAYOUT SHELL as a starting point, but you MUST OPTIMIZE the 'gridPosition' (colSpan, rowSpan). A full row is 12 columns. Give tables/charts colSpan 6 or 12. Give KPIs colSpan 3 or 4. NEVER use colSpan 1 or 2 (it makes the UI cramped and the user hates it).
 2. DATA VARIETY: You MUST use a wide variety of data points. DO NOT repeat the same metrics or {{tag}}s across multiple widgets. Each widget must analyze a completely different aspect of the USER ORIGINAL REQUEST.
-3. BUILD FROM SCRATCH (IGNORE DUMMY HTML): The concept you received contains complex dummy HTML wireframes (like '12,450' or fake bars). YOU MUST COMPLETELY DISCARD THAT HTML! Do NOT try to edit or parse it. You must write a BRAND NEW, fully functional Tailwind HTML string from scratch for every widget, binding the real {{tag}} variables.
-4. PREMIUM DESIGN: Make your new HTML templates ultra-luxurious with glassmorphism, gradients, padding (p-6), and dark mode aesthetics. Ensure text has enough breathing room.
-5. DYNAMIC ROW LABELS: NEVER hardcode text like 'Profit Margin' or 'Revenue' inside lists or tables as the row name. ALWAYS use the appropriate tag (e.g., {{kategori}} or {{column_0}}) so the real name of the item from the dataset is displayed next to its value.`;
+3. PREMIUM DESIGN: Make your new HTML templates ultra-luxurious with glassmorphism, gradients, padding (p-6), and dark mode aesthetics. Ensure text has enough breathing room.
+4. DYNAMIC ROW LABELS: ALWAYS use the appropriate tag (e.g., {{kategori}} or {{column_0}}) so the real name of the item from the dataset is displayed next to its value.`;
 
   console.log("💎 [Gemini Refine] Taslak Gemini ile mükemmelleştiriliyor...");
 
   try {
-    const result = await generateDashboardConfig(metadataPrompt, refinedRequest, "LUXURY DATA BINDING PHASE");
+    const result = await generateDashboardConfig(metadataPrompt, refinedRequest, "Executive Glassmorphism Analytics");
     return result;
   } catch (err) {
-    console.error("❌ [Gemini Refine] Başarısız:", err.message);
+    console.error("❌ [AI Refine] Başarısız:", err.message);
     throw err;
   }
 }
 
 export async function generateInsightsWithGemini(metadataPrompt) {
   const SYSTEM_PROMPT = `Sen profesyonel bir veri analisti ve iş zekası (BI) uzmanısın.
-Görevin, kullanıcının yüklediği veri setinin özetini (METADATA) inceleyerek veri setinden 4-5 adet kritik, aksiyon alınabilir ve son derece mantıklı "İş İçgörüsü" (Business Insights) üretmektir.
-Verilen kolonları, tipleri ve örnek değerleri incele.
+Görevin, kullanıcının yüklediği veri setinin özetini (METADATA) inceleyerek 4-5 adet kritik "İş İçgörüsü" üretmektir.
+Çıktıyı KESİNLİKLE JSON array döndür: [{"title": "...", "type": "opportunity", "text": "...", "impact": "high"}]`;
 
-Çıktıyı KESİNLİKLE aşağıdaki JSON formatında döndürmelisin (SADECE JSON döndür, başka açıklama yazma):
-[
-  {
-    "title": "İçgörü Başlığı",
-    "type": "opportunity", // "opportunity", "risk", "trend", "warning", veya "info"
-    "text": "İçgörünün detaylı açıklaması. Verideki kolonlara ve mantıksal çıkarımlara dayalı olmalıdır.",
-    "impact": "high" // "high", "medium", veya "low"
-  }
-]`;
-
-  const result = await generateStructuredData(SYSTEM_PROMPT, `METADATA:\n${metadataPrompt}`, true);
-  if (result) return result;
-  
-  console.warn("⚠️ Insights generation failed, returning dynamic fallback insights.");
+  try {
+    const result = await generateStructuredData(SYSTEM_PROMPT, `METADATA:\n${metadataPrompt}`, true);
+    if (result) return result;
+  } catch (e) { }
   return getFallbackInsights(metadataPrompt);
 }
 
 export async function generateSwotWithGemini(metadataPrompt) {
-  const SYSTEM_PROMPT = `Sen profesyonel bir iş stratejisti ve veri analistisin.
-Görevin, kullanıcının yüklediği veri setinin özetini (METADATA) inceleyerek veri seti için 4 boyutlu bir SWOT analizi (Strengths, Weaknesses, Opportunities, Threats) üretmektir.
-Analiz veri setinin kolon yapılarına, potansiyel kullanım amaçlarına ve mantıksal sınırlılıklarına odaklanmalıdır. Her kategori için 2-3 adet madde oluştur.
+  const SYSTEM_PROMPT = `Sen profesyonel bir iş stratejistisin.
+METADATA verisini inceleyip 4 boyutlu SWOT analizi üret.
+Çıktıyı KESİNLİKLE JSON nesnesi döndür: {"strengths": [], "weaknesses": [], "opportunities": [], "threats": []}`;
 
-Çıktıyı KESİNLİKLE aşağıdaki JSON formatında döndürmelisin (SADECE JSON döndür, başka açıklama yazma):
-{
-  "strengths": ["...", "..."],
-  "weaknesses": ["...", "..."],
-  "opportunities": ["...", "..."],
-  "threats": ["...", "..."]
-}`;
-
-  const result = await generateStructuredData(SYSTEM_PROMPT, `METADATA:\n${metadataPrompt}`, false);
-  if (result) return result;
-
-  console.warn("⚠️ SWOT generation failed, returning dynamic fallback SWOT.");
+  try {
+    const result = await generateStructuredData(SYSTEM_PROMPT, `METADATA:\n${metadataPrompt}`, false);
+    if (result) return result;
+  } catch (e) { }
   return getFallbackSwot(metadataPrompt);
 }
 
 export async function generateBenchmarkWithGemini(metadataPrompt) {
-  const SYSTEM_PROMPT = `Sen profesyonel bir pazar araştırmacısı ve veri analistisin.
-Görevin, kullanıcının yüklediği veri setinin özetini (METADATA) inceleyerek veri setindeki potansiyel metrikleri sektör standartları (industry standards) veya ideal performans hedefleriyle karşılaştıran 3 adet benchmark karşılaştırması üretmektir.
-Verideki kolonleri incele ve bu veri türü için geçerli olabilecek gerçekçi kıyaslamalar (benchmark) belirle.
+  const SYSTEM_PROMPT = `Sen pazar araştırmacısısın. METADATA verisindeki metrikler için 3 adet benchmark karşılaştırması üret.
+Çıktıyı KESİNLİKLE JSON array döndür: [{"metric": "...", "value": "...", "benchmark": "...", "status": "warning", "analysis": "..."}]`;
 
-Çıktıyı KESİNLİKLE aşağıdaki JSON formatında döndürmelisin (SADECE JSON döndür, başka açıklama yazma):
-[
-  {
-    "metric": "Karşılaştırılan Metrik Adı",
-    "value": "Bizim Tahmini/Mevcut Değerimiz (Ör: %12, 45 Gün vb.)",
-    "benchmark": "Kıyaslanan Sektör Standardı (Ör: %15 (Sektör Ortalaması))",
-    "status": "warning", // "success" (iyi), "warning" (orta/dikkat), veya "danger" (kötü)
-    "analysis": "Kısa kıyaslama yorumu ve aksiyon önerisi."
-  }
-]`;
-
-  const result = await generateStructuredData(SYSTEM_PROMPT, `METADATA:\n${metadataPrompt}`, true);
-  if (result) return result;
-
-  console.warn("⚠️ Benchmark generation failed, returning dynamic fallback benchmark data.");
+  try {
+    const result = await generateStructuredData(SYSTEM_PROMPT, `METADATA:\n${metadataPrompt}`, true);
+    if (result) return result;
+  } catch (e) { }
   return getFallbackBenchmark(metadataPrompt);
 }
 
@@ -373,7 +429,7 @@ Desteklenen Aksiyonlar: 'highlight_green', 'highlight_red', 'highlight_yellow', 
   if (result) return result;
 
   console.warn("⚠️ Rule parsing failed, executing local NLP fallback parser.");
-  
+
   // Extract columns dynamically from metadataPrompt
   const columns = [];
   const colRegex = /- "\{\{([^}]+)\}\}"\s*:\s*([^(]+)/gi;
@@ -461,7 +517,7 @@ Desteklenen Aksiyonlar: 'highlight_green', 'highlight_red', 'highlight_yellow', 
 function getFallbackInsights(metadataPrompt) {
   const sourceMatch = metadataPrompt.match(/Source:\s*([^\n]+)/i);
   const sourceName = sourceMatch ? sourceMatch[1].trim() : "Veri Kaynağı";
-  
+
   const rowsMatch = metadataPrompt.match(/Rows:\s*(\d+)/i);
   const rowCount = rowsMatch ? parseInt(rowsMatch[1], 10) : 0;
 
@@ -490,7 +546,7 @@ function getFallbackInsights(metadataPrompt) {
 function getFallbackSwot(metadataPrompt) {
   const rowsMatch = metadataPrompt.match(/Rows:\s*(\d+)/i);
   const rowCount = rowsMatch ? parseInt(rowsMatch[1], 10) : 0;
-  
+
   const sourceMatch = metadataPrompt.match(/Source:\s*([^\n]+)/i);
   const sourceName = sourceMatch ? sourceMatch[1].trim() : "Veri Kaynağı";
 
@@ -527,7 +583,7 @@ function getFallbackSwot(metadataPrompt) {
 function getFallbackBenchmark(metadataPrompt) {
   const sourceMatch = metadataPrompt.match(/Source:\s*([^\n]+)/i);
   const sourceName = sourceMatch ? sourceMatch[1].trim() : "Veri Kaynağı";
-  
+
   const rowsMatch = metadataPrompt.match(/Rows:\s*(\d+)/i);
   const rowCount = rowsMatch ? parseInt(rowsMatch[1], 10) : 100;
 
@@ -556,59 +612,244 @@ function getFallbackBenchmark(metadataPrompt) {
   ];
 }
 
-export async function recommendKaggleLayouts(metadataPrompt, userRequest, templatesDataset = []) {
-  const dataset = templatesDataset.length > 0 ? templatesDataset : kaggleDashboardDataset;
+export function bindDatasetToTemplates(templates, metadataPrompt) {
+  if (!metadataPrompt || typeof metadataPrompt !== 'string') return templates;
 
-  const systemPrompt = `You are a world-class UI recommendation system. 
-  You have access to a Kaggle dataset of dashboard design templates.
-  Your task is to review the USER REQUEST and metadata, and select the TOP 3 best matching layouts from the Kaggle dataset.
-  
-  KAGGLE DATASET TEMPLATES:
-  ${dataset.map(layout => `- ID: "${layout.id}" | Title: "${layout.title}" | Tags: ${JSON.stringify(layout.tags)} | Description: "${layout.description}"`).join('\n')}
-  
-  USER REQUEST: ${userRequest}
-  METADATA: ${metadataPrompt}
-  
-  Task: Return a JSON array containing EXACTLY 3 IDs of the recommended templates from the Kaggle dataset, ordered by relevance (best first).
-  Format: ["id_1", "id_2", "id_3"]
-  ONLY return the JSON array of strings. No extra text, no wrapper object.`;
+  const columns = [];
+  const colRegex = /- "\{\{([^}]+)\}\}"\s*:\s*([^(]+)/gi;
+  let match;
+  while ((match = colRegex.exec(metadataPrompt)) !== null) {
+    const tag = match[1].trim();
+    const name = match[2].trim();
+    const isNumeric = name.toLowerCase().includes('tutar') || name.toLowerCase().includes('fiyat') || name.toLowerCase().includes('gelir') || name.toLowerCase().includes('miktar') || name.toLowerCase().includes('satış') || name.toLowerCase().includes('orani') || name.toLowerCase().includes('toplam');
+    columns.push({ tag, name, isNumeric });
+  }
+
+  if (columns.length === 0) {
+    return templates;
+  }
+
+  const numCol = columns.find(c => c.isNumeric) || columns[0];
+  const strCol = columns.find(c => !c.isNumeric) || columns[1] || columns[0];
+
+  return templates.map(layout => {
+    const clonedLayout = JSON.parse(JSON.stringify(layout));
+    clonedLayout.widgets = clonedLayout.widgets.map(w => {
+      if (w.config && w.config.htmlTemplate) {
+        let html = w.config.htmlTemplate;
+        html = html.replace(/\{\{sum:Tutar\}\}/gi, `{{sum:${numCol.tag}}}`);
+        html = html.replace(/\{\{avg:Tutar\}\}/gi, `{{avg:${numCol.tag}}}`);
+        html = html.replace(/\{\{primaryMeasure\}\}/gi, `{{${numCol.tag}}}`);
+        html = html.replace(/\{\{tutar\}\}/gi, `{{${numCol.tag}}}`);
+        html = html.replace(/\{\{kategori\}\}/gi, `{{${strCol.tag}}}`);
+        html = html.replace(/Tutar/gi, numCol.name);
+        html = html.replace(/Kategori/gi, strCol.name);
+        w.config.htmlTemplate = html;
+      }
+      return w;
+    });
+    return clonedLayout;
+  });
+}
+
+export async function recommendKaggleLayouts(metadataPrompt, userRequest, templatesDataset = []) {
+  const dataset = templatesDataset.length > 0 ? templatesDataset : canvasVisionTemplates;
 
   try {
-    const rawResult = await generateStructuredData(systemPrompt, "Select the top 3 template IDs in a JSON string array.", true);
-    // Parse the result
-    const ids = Array.isArray(rawResult) ? rawResult : JSON.parse(rawResult);
-    if (Array.isArray(ids) && ids.length > 0) {
-      const selected = ids.map(id => dataset.find(layout => layout.id === id)).filter(Boolean);
-      if (selected.length > 0) {
-        return selected.slice(0, 3);
-      }
+    const systemPrompt = `You are an elite Lead UI/UX Dashboard Architect for Google Gemini.
+CRITICAL TASK: Based on the USER PROMPT and METADATA, generate exactly 3 DISTINCT, CREATIVE, and STRATEGIC dashboard vision concepts tailored specifically to the prompt topic.
+
+USER PROMPT: ${userRequest}
+METADATA: ${metadataPrompt}
+
+For each of the 3 vision concepts, return:
+1. "id": "vision_1", "vision_2", "vision_3"
+2. "title": Punchy, unique, professional title in Turkish (e.g. if topic is E-Commerce: "Online Sipariş & Ciro Analitiği", "Müşteri Yaşam Boyu Değeri", "Dönüşüm & Sepet Performansı")
+3. "subtitle": Executive subtitle with metrics/KPIs relevant to the prompt
+4. "description": 2-3 sentences explaining what this vision monitors and why it was chosen
+5. "category": Category name (e.g. "Satış & Gelir", "Yönetici Özeti", "Büyüme & Retansiyon", "Operasyon & Stok")
+6. "templateIndex": number 0 to 4 (which base visual layout frame to assign: 0=Executive Dark Glass, 1=Purple Modern, 2=Orange Operational, 3=Cyan Analytical, 4=Blue Minimalist)
+
+Return ONLY a valid JSON array with 3 objects. Format:
+[
+  { "id": "vision_1", "title": "...", "subtitle": "...", "description": "...", "category": "...", "templateIndex": 0 },
+  { "id": "vision_2", "title": "...", "subtitle": "...", "description": "...", "category": "...", "templateIndex": 3 },
+  { "id": "vision_3", "title": "...", "subtitle": "...", "description": "...", "category": "...", "templateIndex": 4 }
+]`;
+
+    console.log("⚡ [Gemini Vision Generator] Gemini 3 Özel Vizyon Konsepti Üretiyor:", userRequest);
+    const rawResult = await generateStructuredData(systemPrompt, `GENERATE 3 VISION CONCEPTS FOR: ${userRequest}`, true);
+
+    if (Array.isArray(rawResult) && rawResult.length >= 3) {
+      console.log("✅ [Gemini Vision Generator] 3 Vizyon Konsepti Gemini Tarafından Başarıyla Üretildi:", rawResult.map(r => r.title));
+      const generatedLayouts = rawResult.slice(0, 3).map((concept, idx) => {
+        const tIndex = (typeof concept.templateIndex === 'number' && concept.templateIndex >= 0 && concept.templateIndex < dataset.length) 
+          ? concept.templateIndex 
+          : (idx % dataset.length);
+        const baseTemplate = dataset[tIndex] || dataset[0];
+        
+        // Clone base template and adapt its title, subtitle, description, and widget titles to the concept!
+        const cloned = JSON.parse(JSON.stringify(baseTemplate));
+        cloned.id = concept.id || `gemini_vision_${idx + 1}`;
+        cloned.title = concept.title || baseTemplate.title;
+        cloned.subtitle = concept.subtitle || baseTemplate.subtitle;
+        cloned.description = concept.description || baseTemplate.description;
+        cloned.category = concept.category || baseTemplate.category;
+
+        // Customise widgets inner titles based on this concept
+        if (cloned.widgets && Array.isArray(cloned.widgets)) {
+          cloned.widgets = cloned.widgets.map((w) => {
+            if (w.config && w.config.htmlTemplate) {
+              let html = w.config.htmlTemplate;
+              html = html.replace(/Yönetici Özeti|Satış Analitiği|İnsan Kaynakları|Operasyon \/ Stok|Performans Analizi/gi, cloned.title);
+              w.config.htmlTemplate = html;
+            }
+            return w;
+          });
+        }
+        return cloned;
+      });
+
+      return bindDatasetToTemplates(generatedLayouts, metadataPrompt);
     }
   } catch (err) {
-    console.warn("Kaggle layout recommendation failed, falling back to first 3 layouts:", err);
+    console.warn("⚠️ [Gemini Vision Generator] Yapay zeka vizyon üretimi fallback'e düştü:", err);
   }
-  
-  return dataset.slice(0, 3);
+
+  // Fallback: Dynamically adapt template titles with prompt keyword
+  const pLower = (userRequest || '').trim();
+  const adapted = dataset.slice(0, 3).map((tmpl, idx) => {
+    const copy = JSON.parse(JSON.stringify(tmpl));
+    if (pLower && pLower.length > 2) {
+      copy.title = `${pLower.slice(0, 30)} - Konsept ${idx + 1}`;
+      copy.subtitle = `${pLower} Odaklı Dinamik Metrikler & Dağılım`;
+    }
+    return copy;
+  });
+
+  return bindDatasetToTemplates(adapted, metadataPrompt);
 }
 
 export async function modifyDashboardWithGemini(currentDashboard, metadataPrompt, modificationRequest) {
-  const systemPrompt = `You are a world-class UI Refinement Engine for a live dashboard.
-  Your task is to take the CURRENT DASHBOARD JSON layout and the USER MODIFICATION REQUEST, and return a modified version of the JSON layout that perfectly executes the user request.
-  
-  CURRENT DASHBOARD JSON:
-  ${JSON.stringify(currentDashboard, null, 2)}
-  
-  METADATA:
-  ${metadataPrompt}
-  
-  INSTRUCTIONS:
-  1. Carefully parse the USER MODIFICATION REQUEST. It could be a voice command or text instruction (e.g., 'make the background blue', 'change the KPI title to Sales Summary', 'add another row', 'expand the chart width', etc.).
-  2. Implement this request by modifying the HTML template(s) or gridPosition(s) of the widgets in the JSON structure.
-  3. Ensure all Tailwind classes you add/modify are compatible and look premium (glassmorphism, dark slate bg-slate-900/50, nice borders, blue/indigo accents).
-  4. Preserve all data binding tags (like {{primaryMeasure}} or {{column_0}}) so that data rendering continues to work.
-  5. Return ONLY the updated dashboard JSON object. Do NOT include markdown code blocks or wrapper text.`;
+  const systemPrompt = `You are a world-class UI Refinement Engine for an executive live analytics dashboard.
+CRITICAL MANDATE:
+The user has picked this specific dashboard vision from the Tinder deck, and the final dashboard MUST STAY VISUALLY FAITHFUL to this selected vision layout and styling!
 
-  console.log("💎 [Gemini Modify] Değişiklik uygulanıyor:", modificationRequest);
+RULES:
+1. Maintain the EXACT widget count (${currentDashboard.widgets?.length || 5}) and layout grid positions.
+2. In each widget's htmlTemplate, adapt the titles, metric labels, and status badges to match the USER REQUEST and domain, while STRICTLY PRESERVING all background colors, gradients, Tailwind CSS classes, and visual containers.
+3. Keep valid data interpolation tags like {{sum:Tutar}}, {{avg:Tutar}}, {{count:1}}, {{TOTAL_ROWS}}, etc.
+4. Return a valid JSON matching the schema with 'title', 'subtitle', and 'widgets'.`;
 
-  const result = await generateStructuredData(systemPrompt, `MODIFICATION REQUEST: ${modificationRequest}`, false);
-  return result || currentDashboard;
+  console.log("💎 [AI Modify Engine] Seçilen vizyon korunarak Gemini ile rafine ediliyor:", modificationRequest);
+
+  try {
+    const result = await generateStructuredData(systemPrompt, `SELECTED VISION TITLE: ${currentDashboard.title}\nUSER PROMPT: ${modificationRequest}\nMETADATA: ${metadataPrompt}\nCURRENT WIDGETS:\n${JSON.stringify(currentDashboard.widgets, null, 2)}`, false);
+    if (result && (result.widgets || result.title)) {
+      const mergedResult = {
+        ...currentDashboard,
+        id: currentDashboard.id,
+        image: currentDashboard.image,
+        category: currentDashboard.category,
+        title: result.title || currentDashboard.title,
+        subtitle: result.subtitle || currentDashboard.subtitle,
+      };
+
+      if (Array.isArray(result.widgets) && result.widgets.length > 0) {
+        mergedResult.widgets = result.widgets.map((w, idx) => {
+          const orig = currentDashboard.widgets?.[idx] || {};
+          return {
+            ...orig,
+            title: w.title || orig.title,
+            type: orig.type || w.type || 'kpi_card',
+            gridPosition: orig.gridPosition || w.gridPosition,
+            config: {
+              ...(orig.config || {}),
+              htmlTemplate: w.config?.htmlTemplate || w.htmlTemplate || orig.config?.htmlTemplate
+            }
+          };
+        });
+      } else {
+        mergedResult.widgets = currentDashboard.widgets;
+      }
+      return mergedResult;
+    }
+  } catch (err) {
+    console.warn("⚠️ [AI Modify Engine] Yapay zeka revizyon hatası:", err.message);
+  }
+  return currentDashboard;
 }
+
+export async function synthesizeDatasetFromPrompt(userPrompt) {
+  const systemPrompt = `You are a specialized data synthesis engine.
+The user wants to generate a dashboard but does NOT have a dataset file.
+Based on the USER PROMPT, generate a realistic, high quality synthetic tabular dataset.
+Requirements:
+1. "sheetName": Short descriptive title (e.g. "E-Ticaret Satışları", "İK Analitiği", "Operasyon & Stok").
+2. "headers": Array of 4 to 6 relevant column names (e.g. ["Ay", "Kategori", "Tutar", "Adet", "Durum", "Bölge"]). MUST include at least 1 or 2 numeric metric columns (like "Tutar", "Ciro", "Adet", "Puan", "Maliyet").
+3. "rows": Array of 8 to 15 realistic data rows (arrays of values matching the headers). Format numbers as pure numbers (e.g. 45000, not "45.000 TL").
+Return ONLY valid JSON format:
+{
+  "sheetName": "...",
+  "headers": ["...", "..."],
+  "rows": [
+    ["...", 1234, "..."],
+    ...
+  ]
+}`;
+
+  console.log("⚡ [Gemini Data Synthesizer] Prompt'tan veri seti üretiliyor:", userPrompt);
+  try {
+    const res = await generateStructuredData(systemPrompt, `USER PROMPT: ${userPrompt}`, false);
+    if (res && res.headers && Array.isArray(res.rows) && res.rows.length > 0) {
+      return res;
+    }
+  } catch (err) {
+    console.warn("Synthesize failed, using intelligent fallback:", err);
+  }
+
+  // Fast smart fallback based on prompt keywords:
+  const p = (userPrompt || '').toLowerCase();
+  if (p.includes('ik') || p.includes('personel') || p.includes('çalışan') || p.includes('hr')) {
+    return {
+      sheetName: "İK & Personel Analitiği",
+      headers: ["Departman", "Çalışan Sayısı", "İşe Alım", "Memnuniyet Skoru", "Devir Oranı"],
+      rows: [
+        ["Yazılım & Teknoloji", 45, 8, 4.8, 2.1],
+        ["Pazarlama & Büyüme", 28, 5, 4.5, 3.4],
+        ["Satış & Gelir", 38, 12, 4.2, 4.8],
+        ["Operasyon & Lojistik", 32, 4, 4.6, 2.5],
+        ["Ürün & Tasarım", 18, 3, 4.9, 1.2],
+        ["Müşteri İlişkileri", 24, 6, 4.3, 3.9]
+      ]
+    };
+  } else if (p.includes('stok') || p.includes('depo') || p.includes('lojistik') || p.includes('operasyon')) {
+    return {
+      sheetName: "Operasyon & Stok Durumu",
+      headers: ["Ürün Kodu", "Kategori", "Mevcut Stok", "Kritik Eşik", "Tedarik Süresi", "Durum"],
+      rows: [
+        ["PRD-101", "Elektronik", 450, 100, 3, "Normal"],
+        ["PRD-102", "Aksesuar", 85, 120, 7, "Kritik"],
+        ["PRD-103", "Donanım", 620, 150, 2, "Normal"],
+        ["PRD-104", "Tüketim", 45, 100, 5, "Kritik"],
+        ["PRD-105", "Yedek Parça", 310, 80, 4, "Normal"],
+        ["PRD-106", "Kablo & Ağ", 950, 200, 2, "Yüksek"]
+      ]
+    };
+  } else {
+    return {
+      sheetName: "Satış & Gelir Analitiği",
+      headers: ["Ay", "Kategori", "Tutar", "Sipariş Sayısı", "Bölge", "Durum"],
+      rows: [
+        ["Ocak", "Elektronik", 78500, 142, "Marmara", "Tamamlandı"],
+        ["Şubat", "Moda & Giyim", 54200, 215, "Ege", "Tamamlandı"],
+        ["Mart", "Ev & Yaşam", 68900, 189, "İç Anadolu", "Tamamlandı"],
+        ["Nisan", "Elektronik", 92400, 168, "Marmara", "Tamamlandı"],
+        ["Mayıs", "Kozmetik", 41200, 134, "Akdeniz", "Tamamlandı"],
+        ["Haziran", "Spor & Outdoor", 63800, 195, "Karadeniz", "Tamamlandı"],
+        ["Temmuz", "Elektronik", 105200, 220, "Marmara", "Tamamlandı"]
+      ]
+    };
+  }
+}
+

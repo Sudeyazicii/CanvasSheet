@@ -42,7 +42,7 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
             metadata.columnStats.map(c => {
               if (c.type === 'number') return (Math.random() * 1000).toFixed(0) + (c.unit || '');
               if (c.type === 'date') return new Date().toLocaleDateString();
-              return `Sallamasyon ${c.name}`;
+              return c.sampleValues && c.sampleValues[0] ? c.sampleValues[0] : `${c.name} #1`;
             })
           );
           const fullMock = [headers, ...mockRows];
@@ -69,22 +69,26 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
           dataMap[range] = filteredData;
 
           const unsub = DataHub.subscribe(range, (updatedData) => {
-            console.log(`🔔 Live update received for ${range}`);
-            setSheetData(prev => ({
-              ...prev,
-              [range]: updatedData.filter((row, idx) => idx === 0 || row.some(cell => cell && cell.toString().trim() !== ''))
-            }));
+            if (!updatedData || !Array.isArray(updatedData)) return;
+            const newFiltered = updatedData.filter((row, idx) => idx === 0 || row.some(cell => cell && cell.toString().trim() !== ''));
+            setSheetData(prev => {
+              if (JSON.stringify(prev[range]) === JSON.stringify(newFiltered)) return prev;
+              return {
+                ...prev,
+                [range]: newFiltered
+              };
+            });
           });
           unsubscribes.push(unsub);
         }
         setSheetData(dataMap);
 
         return () => {
-          unsubscribes.forEach(unsub => unsub());
+          unsubscribes.forEach(unsub => unsub && unsub());
         };
       } catch (err) {
-        console.error('Data load error:', err);
-        setError(err.message);
+        console.warn('⚠️ [DynamicDashboard] Canlı veri yükleme uyarısı, mock veriye geçiliyor:', err.message);
+        setSheetData(mockDataMap);
       } finally {
         setLoading(false);
       }
@@ -129,49 +133,35 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
 
   const sortedWidgets = [...(uiConfig?.widgets || [])].sort((a, b) => (a.gridPosition?.order || 0) - (b.gridPosition?.order || 0));
 
-  return (
-    <div className="space-y-10 animate-fadeIn">
-      <div className="flex flex-col gap-2 relative">
-        <h1 className="text-4xl font-black text-white tracking-tight">{uiConfig.title}</h1>
-        <p className="text-slate-400 font-medium text-lg">{uiConfig.subtitle}</p>
-        
-        {mockMode && (
-          <div className="absolute top-0 right-0 px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-amber-400 text-xs font-black uppercase tracking-widest flex items-center gap-2 animate-pulse">
-            <Info size={14} /> Sallamasyon (Mock) Görünüm
-          </div>
-        )}
-      </div>
+  function getResponsiveColSpanClass(rawSpan, viewMode) {
+    if (viewMode === 'list') return 'col-span-12';
+    const val = Number(rawSpan) || 4;
+    if (val === 1) return 'col-span-12 sm:col-span-6 lg:col-span-3';
+    if (val === 2) return 'col-span-12 sm:col-span-6 lg:col-span-4';
+    if (val === 3) return 'col-span-12 lg:col-span-6';
+    if (val === 4) return 'col-span-12';
+    if (val >= 12) return 'col-span-12';
+    if (val >= 8) return 'col-span-12 lg:col-span-8';
+    if (val >= 6) return 'col-span-12 lg:col-span-6';
+    return `col-span-12 sm:col-span-6 lg:col-span-${val}`;
+  }
 
-      <div className="grid grid-cols-12 gap-8 items-start">
+  return (
+    <div className="space-y-6 animate-fadeIn">
+      {mockMode && (
+        <div className="mb-4 inline-flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-amber-400 text-xs font-black uppercase tracking-widest animate-pulse">
+          <Info size={14} /> Mock Görünüm Aktif
+        </div>
+      )}
+
+      <div className="grid grid-cols-12 gap-6 items-stretch">
         {sortedWidgets.map((widget, index) => {
           try {
             const WidgetComponent = getWidgetComponent(widget.type);
             if (!WidgetComponent) return null;
 
-            const colSpan = viewMode === 'list' ? 12 : (widget.gridPosition?.colSpan || 12);
-            const rowSpan = viewMode === 'list' ? 1 : (widget.gridPosition?.rowSpan || 1);
-
-            const colSpanClass = 
-              colSpan === 1 ? 'col-span-1' :
-              colSpan === 2 ? 'col-span-2' :
-              colSpan === 3 ? 'col-span-3' :
-              colSpan === 4 ? 'col-span-4' :
-              colSpan === 5 ? 'col-span-5' :
-              colSpan === 6 ? 'col-span-6' :
-              colSpan === 7 ? 'col-span-7' :
-              colSpan === 8 ? 'col-span-8' :
-              colSpan === 9 ? 'col-span-9' :
-              colSpan === 10 ? 'col-span-10' :
-              colSpan === 11 ? 'col-span-11' :
-              'col-span-12';
-
-            const rowSpanClass = 
-              rowSpan === 1 ? 'row-span-1' :
-              rowSpan === 2 ? 'row-span-2' :
-              rowSpan === 3 ? 'row-span-3' :
-              rowSpan === 4 ? 'row-span-4' :
-              rowSpan === 5 ? 'row-span-5' :
-              'row-span-6';
+            const colSpanClass = getResponsiveColSpanClass(widget.gridPosition?.colSpan, viewMode);
+            const rowSpanClass = (widget.gridPosition?.rowSpan || 1) > 1 ? 'row-span-2' : 'row-span-1';
 
             const dataKey = widget.dataSource ? (widget.dataSource.range.includes('!') ? widget.dataSource.range : `${widget.dataSource.sheetName}${widget.dataSource.sheetName ? '!' : ''}${widget.dataSource.range}`) : null;
             
@@ -182,10 +172,9 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
             return (
               <div
                 key={`${widget.type}-${index}`}
-                className={`group relative transition-all duration-150 hover:-translate-y-1 ${colSpanClass} ${rowSpanClass}`}
+                className={`group relative transition-all duration-300 hover:-translate-y-1 ${colSpanClass} ${rowSpanClass}`}
               >
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-[32px] blur opacity-0 group-hover:opacity-10 transition duration-200"></div>
-                <div className="relative glass-panel rounded-[32px] overflow-hidden border-white/5 group-hover:border-white/10 transition-colors h-full">
+                <div className="relative h-full flex flex-col rounded-3xl overflow-hidden">
                   <WidgetComponent
                      title={widget.title}
                      sheetData={widgetData}

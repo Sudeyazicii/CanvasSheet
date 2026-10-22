@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogIn, Link2, ArrowRight, LayoutGrid, Shield, Zap, Database, AlertCircle, CheckCircle2, LogOut } from 'lucide-react';
+import { LogIn, Link2, ArrowRight, LayoutGrid, Shield, Zap, Database, AlertCircle, CheckCircle2, LogOut, Sparkles } from 'lucide-react';
 import { useGoogleAuth } from '../auth/useGoogleAuth';
 import { extractSpreadsheetId, extractGid, getSheetMetadata, readSheet } from '../services/sheetsService';
 import DataHub from '../mcp/DataHub';
@@ -326,6 +326,7 @@ export default function ConnectPage() {
 
         {/* Main Card */}
         <div className="glass-panel rounded-[32px] p-8 shadow-2xl">
+
         {/* Step 1: Global Login */}
         <div className="glass-panel rounded-[32px] p-8 shadow-2xl mb-8">
           <div className="flex items-center gap-3 mb-6">
@@ -333,7 +334,7 @@ export default function ConnectPage() {
               {isAuthenticated ? <CheckCircle2 size={16} /> : '1'}
             </div>
             <h3 className={`font-bold ${isAuthenticated ? 'text-emerald-400' : 'text-white'}`}>
-              {isAuthenticated ? 'Oturum Açıldı' : 'Google ile Giriş Yapın'}
+              {isAuthenticated ? 'Oturum Açıldı' : 'Veya Google ile Giriş Yapın'}
             </h3>
           </div>
 
@@ -350,7 +351,7 @@ export default function ConnectPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-slate-400 text-sm text-center mb-6">Sistemi kullanabilmek için önce Google hesabınızla giriş yapmalısınız.</p>
+              <p className="text-slate-400 text-sm text-center mb-6">Kendi Google Sheet tablolarınızı bağlamak için giriş yapabilirsiniz.</p>
               <button
                 onClick={login}
                 disabled={isLoading}
@@ -358,6 +359,17 @@ export default function ConnectPage() {
               >
                 <LogIn size={20} />
                 {isLoading ? 'Yükleniyor...' : 'Google ile Giriş Yap'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.setItem('guest_mode', 'true');
+                  sessionStorage.setItem('mcp_active_source', 'text');
+                  navigate('/analyze');
+                }}
+                className="w-full py-3 bg-slate-800/60 hover:bg-slate-700/60 text-slate-300 font-semibold rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2 text-xs"
+              >
+                Giriş Yapmadan Misafir Olarak Keşfet
               </button>
             </div>
           )}

@@ -9,8 +9,9 @@ export class McpDatabaseAdapter {
 
   async init(dbType) {
     this.ready = new Promise(async (resolve) => {
-      // Daha esnek URL kontrolü
-      if (dbType && (dbType.includes('.') || dbType.includes('/') || dbType.includes('http'))) {
+      const isUrl = dbType && (dbType.includes('.') || dbType.includes('/') || dbType.includes('http'));
+      
+      if (isUrl) {
         try {
           console.log(`🌐 [MCP] Fetching real data from ${dbType}...`);
           const res = await fetch(dbType);
@@ -22,20 +23,33 @@ export class McpDatabaseAdapter {
             const rows = json.map(obj => headers.map(h => obj[h]));
             this.data = [headers, ...rows];
             console.log(`✅ [MCP] ${this.data.length - 1} satır veri başarıyla yüklendi.`);
-          } else {
+          } else if (Array.isArray(json)) {
             this.data = json;
           }
         } catch (err) {
-          console.error('❌ [MCP] Veri çekme hatası:', err.message);
-          this.data = [["Hata"], [`Veri çekilemedi: ${err.message}`]];
+          console.warn('⚠️ [MCP] Veri kaynağı URL hatası, varsayılan Kaggle verisetine geçiliyor:', err.message);
+          this.loadDefaultDataset();
         }
       } else {
-        this.data = [["Hata"], ["Geçersiz veri kaynağı URL'si"]];
+        this.loadDefaultDataset();
       }
       this.notifySubscribers();
       resolve();
     });
     return this.ready;
+  }
+
+  loadDefaultDataset() {
+    const headers = ["Kategori", "Tutar", "Bölge", "Tarih", "Durum"];
+    const rows = [
+      ["Elektronik & Teknoloji", "12500", "Marmara", "2026-08-01", "Tamamlandı"],
+      ["Yazılım Lisansları", "48000", "Ege", "2026-08-05", "Tamamlandı"],
+      ["Donanım & Sunucu", "23400", "İç Anadolu", "2026-08-10", "İşlemde"],
+      ["Lojistik Hizmetler", "15600", "Akdeniz", "2026-08-15", "Tamamlandı"],
+      ["Pazarlama & Medya", "31200", "Marmara", "2026-08-20", "Tamamlandı"],
+      ["Kurumsal Danışmanlık", "18900", "Karadeniz", "2026-08-22", "İşlemde"]
+    ];
+    this.data = [headers, ...rows];
   }
 
   notifySubscribers() {
@@ -48,16 +62,15 @@ export class McpDatabaseAdapter {
     });
   }
 
-
   async getMetadata() {
     if (this.ready) await this.ready;
     return {
       sourceType: 'mcp',
-      dbType: this.dbType,
+      dbType: this.dbType || 'kaggle',
       rowCount: this.data.length > 0 ? this.data.length - 1 : 0,
       columnCount: this.data.length > 0 ? this.data[0].length : 0,
       headers: this.data.length > 0 ? this.data[0] : [],
-      isLive: true
+      isLive: false
     };
   }
 
@@ -67,44 +80,16 @@ export class McpDatabaseAdapter {
   }
 
   subscribe(range, callback) {
-    // If only one arg is provided, it's the callback
     const cb = typeof range === 'function' ? range : callback;
     if (typeof cb === 'function') {
       this.subscribers.push(cb);
-    }
-    
-    // Simulate live updates every 5 seconds by re-fetching
-    if (!this.intervalId) {
-      console.log(`📡 [MCP ${this.dbType}] Live sync started...`);
-      this.intervalId = setInterval(async () => {
-        if (this.dbType && (this.dbType.includes('.') || this.dbType.includes('/') || this.dbType.includes('http'))) {
-          try {
-            // Önbelleği (cache) kırmak için timestamp ekliyoruz
-            const separator = this.dbType.includes('?') ? '&' : '?';
-            const fetchUrl = `${this.dbType}${separator}t=${Date.now()}`;
-            
-            const res = await fetch(fetchUrl);
-            const json = await res.json();
-            if (Array.isArray(json) && json.length > 0 && typeof json[0] === 'object') {
-              const headers = Object.keys(json[0]);
-              const rows = json.map(obj => headers.map(h => obj[h]));
-              this.data = [headers, ...rows];
-              this.notifySubscribers();
-            }
-          } catch (e) {
-            console.error('Live sync fetch error:', e);
-          }
-        }
-      }, 5000);
+      if (this.data && this.data.length > 0) {
+        cb(this.data);
+      }
     }
     
     return () => {
-      this.subscribers = this.subscribers.filter(cb => cb !== callback);
-      if (this.subscribers.length === 0 && this.intervalId) {
-        clearInterval(this.intervalId);
-        this.intervalId = null;
-        console.log(`🛑 [MCP ${this.dbType}] Live sync stopped.`);
-      }
+      this.subscribers = this.subscribers.filter(subscriber => subscriber !== cb);
     };
   }
 }

@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoogleAuth } from '../auth/useGoogleAuth.js';
 import { analyzeSheet, formatMetadataForPrompt } from '../services/sheetAnalyzer.js';
-import { generateMultipleDashboardConfigs } from '../services/groqService';
-import { refineDashboardWithGemini, generateDashboardConfig, generateInsightsWithGemini, generateSwotWithGemini, generateBenchmarkWithGemini, parseRuleWithGemini, recommendKaggleLayouts, modifyDashboardWithGemini } from '../services/geminiService.js';
+import { refineDashboardWithGemini, generateDashboardConfig, generateInsightsWithGemini, generateSwotWithGemini, generateBenchmarkWithGemini, parseRuleWithGemini, recommendKaggleLayouts, modifyDashboardWithGemini, synthesizeDatasetFromPrompt, bindDatasetToTemplates } from '../services/geminiService.js';
+import { canvasVisionTemplates } from '../data/canvasTemplates.js';
 import { commitToGitHub } from '../services/githubService.js';
 import DynamicDashboard from '../engine/DynamicDashboard.jsx';
 import Brain from '../services/Brain.js';
@@ -168,6 +168,66 @@ export default function AnalyzePage() {
       navigate('/connect');
     }
   }, [user, accessToken, navigate]);
+
+  // 🚀 Zero-Data / Prompt-First Otomatik Başlatıcı
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const promptParam = params.get('prompt') || sessionStorage.getItem('zero_data_prompt');
+
+    if (mode === 'zero_data' || promptParam) {
+      const activePrompt = promptParam || "Modern Yönetici ve Satış Analitiği Paneli";
+      setPrompt(activePrompt);
+      
+      // 1. ANINDA 3 ŞIK ŞABLONU GÖSTER (Kullanıcı hiç beklemez, hemen kartları görür)
+      const pLower = activePrompt.toLowerCase();
+      let matched = [...canvasVisionTemplates];
+      if (pLower.includes('ik') || pLower.includes('hr') || pLower.includes('çalışan') || pLower.includes('personel')) {
+        matched = [canvasVisionTemplates[1], canvasVisionTemplates[0], canvasVisionTemplates[4]];
+      } else if (pLower.includes('stok') || pLower.includes('depo') || pLower.includes('lojistik') || pLower.includes('operasyon')) {
+        matched = [canvasVisionTemplates[2], canvasVisionTemplates[0], canvasVisionTemplates[4]];
+      } else if (pLower.includes('performans') || pLower.includes('görev') || pLower.includes('iş yükü')) {
+        matched = [canvasVisionTemplates[4], canvasVisionTemplates[0], canvasVisionTemplates[3]];
+      } else {
+        matched = [canvasVisionTemplates[0], canvasVisionTemplates[3], canvasVisionTemplates[4]];
+      }
+      
+      setUiConfigs(matched);
+      setSelectedIndex(0);
+      setCurrentCardIndex(0);
+      setRejectedCount(0);
+      setIsLocked(false);
+      setStep('analyzed'); // Kullanıcı önce Prompt sayfasını görür
+      setMascotChat(`Hedef analizinizi girin, ardından 'Vizyon Konseptlerini İncele' butonuna tıklayarak Tinder kart destesine geçebilirsiniz.`);
+
+      // 2. ARKA PLANDA HIZLA GEMINI ÇALIŞIYOR (Veri seti yoksa sentezliyor ve bağlıyor)
+      synthesizeDatasetFromPrompt(activePrompt).then(async (synth) => {
+        try {
+          const fullRows = [synth.headers, ...synth.rows];
+          setRawData(fullRows);
+          
+          await DataHub.connect('text', { text: JSON.stringify(synth.rows.map(r => {
+            const obj = {};
+            synth.headers.forEach((h, i) => { obj[h] = r[i]; });
+            return obj;
+          })) });
+
+          const sheetMetadata = await analyzeSheet(fullRows, synth.sheetName);
+          setMetadata(sheetMetadata);
+
+          const metadataPrompt = formatMetadataForPrompt(sheetMetadata);
+
+          generateInsightsWithGemini(metadataPrompt).then(res => setInsights(res)).catch(() => {});
+          generateSwotWithGemini(metadataPrompt).then(res => setSwot(res)).catch(() => {});
+          generateBenchmarkWithGemini(metadataPrompt).then(res => setBenchmark(res)).catch(() => {});
+
+          console.log("⚡ [Gemini Background Synthesizer] Veri seti ve şema arka planda hazırlandı:", synth.sheetName);
+        } catch (err) {
+          console.warn("Background synthesize error:", err);
+        }
+      });
+    }
+  }, []);
 
   // TTS Speech Trigger
   useEffect(() => {
@@ -360,7 +420,6 @@ export default function AnalyzePage() {
       const meta = await DataHub.getMetadata();
       const sheetMetadata = await analyzeSheet(fetchedData, meta.sheetName || meta.fileName || 'Data Source');
       setMetadata(sheetMetadata);
-      setStep('analyzed');
 
       const metadataPrompt = formatMetadataForPrompt(sheetMetadata);
 
@@ -378,16 +437,56 @@ export default function AnalyzePage() {
         .catch(err => console.warn("SWOT generation error:", err))
         .finally(() => setLoadingSwot(false));
 
-      // AI Benchmark generation
-      setLoadingBenchmark(true);
-      generateBenchmarkWithGemini(metadataPrompt)
-        .then(res => setBenchmark(res))
-        .catch(err => console.warn("Benchmark generation error:", err))
-        .finally(() => setLoadingBenchmark(false));
-
+      setStep('analyzed');
+      setMascotChat("Veri setinizi başarıyla analiz ettim! Lütfen dashboard hedefinizi veya promptunuzu girin, ardından 'Vizyon Konseptlerini İncele' butonuna tıklayarak Tinder kart destesine geçebilirsiniz.");
     } catch (err) {
       setError(`Analiz hatası: ${err.message}`);
       setStep('error');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleProceedToVisionDeck = async () => {
+    setAnalyzing(true);
+    setMascotChat("Gemini promptunuza özel 3 farklı vizyon konsepti tasarlıyor, lütfen bekleyin...");
+    try {
+      let currentMetadata = metadata;
+      if (!currentMetadata) {
+        const synth = await synthesizeDatasetFromPrompt(prompt || "Genel Satış ve Gelir Analitiği");
+        const fullRows = [synth.headers, ...synth.rows];
+        setRawData(fullRows);
+        await DataHub.connect('text', { text: JSON.stringify(synth.rows.map(r => {
+          const obj = {};
+          synth.headers.forEach((h, i) => { obj[h] = r[i]; });
+          return obj;
+        })) });
+        currentMetadata = await analyzeSheet(fullRows, synth.sheetName);
+        setMetadata(currentMetadata);
+      }
+
+      const metadataPrompt = formatMetadataForPrompt(currentMetadata);
+      const userPrompt = prompt || "Verilerime uygun lüks bir dashboard tasarla.";
+      
+      const configs = await recommendKaggleLayouts(
+        metadataPrompt,
+        userPrompt
+      );
+      setUiConfigs(configs);
+      setSelectedIndex(0);
+      setCurrentCardIndex(0);
+      setRejectedCount(0);
+      setIsLocked(false);
+      setStep('complete');
+      setMascotChat(`Promptunuza özel 3 vizyon konsepti Gemini ile oluşturuldu! Kartları Tinder gibi kaydırarak veya aşağıdaki butonlarla seçebilirsiniz.`);
+    } catch (err) {
+      console.warn("Layout recommendation fallback:", err);
+      setUiConfigs(canvasVisionTemplates);
+      setSelectedIndex(0);
+      setCurrentCardIndex(0);
+      setRejectedCount(0);
+      setIsLocked(false);
+      setStep('complete');
     } finally {
       setAnalyzing(false);
     }
@@ -484,37 +583,51 @@ export default function AnalyzePage() {
     }
   };
 
-  const handleGenerateDashboard = async () => {
-    if (!metadata) return;
+  const handleGenerateFinalDashboard = async () => {
+    if (uiConfigs.length === 0) return;
     setGenerating(true);
-    setError(null);
     setStep('generating');
 
-    const schemaOnly = {
-      sheetName: metadata.sheetName,
-      headers: metadata.headers,
-      primaryMeasure: metadata.primaryMeasure,
-      rows: []
-    };
-
     try {
-      console.log("⚡ [Kaggle Dataset Engine] En iyi 3 Kaggle tasarım şablonu seçiliyor...");
-      const metadataPrompt = formatMetadataForPrompt(metadata);
-      const configs = await recommendKaggleLayouts(
+      const selectedLayout = uiConfigs[selectedIndex];
+      
+      let currentMetadata = metadata;
+      if (!currentMetadata) {
+        const synth = await synthesizeDatasetFromPrompt(prompt || "Genel Satış ve Gelir Analitiği");
+        const fullRows = [synth.headers, ...synth.rows];
+        setRawData(fullRows);
+        await DataHub.connect('text', { text: JSON.stringify(synth.rows.map(r => {
+          const obj = {};
+          synth.headers.forEach((h, i) => { obj[h] = r[i]; });
+          return obj;
+        })) });
+        currentMetadata = await analyzeSheet(fullRows, synth.sheetName);
+        setMetadata(currentMetadata);
+      }
+
+      const metadataPrompt = formatMetadataForPrompt(currentMetadata);
+      const userInstruction = prompt || "Verilerime uygun lüks bir dashboard tasarla.";
+
+      console.log("🚀 [Gemini Engine] Seçilen Vizyon ve Prompt Gemini ile Bağlanıyor:", userInstruction);
+
+      const refinedConfig = await modifyDashboardWithGemini(
+        selectedLayout,
         metadataPrompt,
-        prompt || "Verilerime uygun lüks bir dashboard tasarla."
+        userInstruction
       );
 
-      setUiConfigs(configs);
-      setSelectedIndex(0);
-      setCurrentCardIndex(0);
-      setRejectedCount(0);
-      setIsLocked(false);
+      const finalConfig = refinedConfig || selectedLayout;
+      setActiveDashboard(finalConfig);
+      setIsLocked(true);
       setStep('complete');
+      setMascotChat(`Harika! Promptunuz ("${userInstruction}") ve seçtiğiniz vizyon konsepti Gemini ile işlenerek dashboard en sonda başarıyla oluşturuldu!`);
     } catch (err) {
-      console.error("❌ [Hybrid Engine] Ön üretim hatası:", err.message);
-      setError(err.message);
-      setStep('error');
+      console.error("Final generation error:", err);
+      const selectedLayout = uiConfigs[selectedIndex];
+      setActiveDashboard(selectedLayout);
+      setIsLocked(true);
+      setStep('complete');
+      setMascotChat(`Dashboard vizyon konsepti ile başarıyla yüklendi.`);
     } finally {
       setGenerating(false);
     }
@@ -523,34 +636,71 @@ export default function AnalyzePage() {
   const handleSelect = async (index) => {
     setSelectedIndex(index);
     setIsLocked(true);
-    
+
     if (refinedConfigs[index]) {
       console.log(`💎 [Refine Cache] Konsept ${index + 1} için önbellekten yükleniyor...`);
       setActiveDashboard(refinedConfigs[index]);
       return;
     }
 
-    setRefining(true);
     try {
       const selectedLayout = uiConfigs[index];
-      const metadataPrompt = formatMetadataForPrompt(metadata);
       
-      const refinedConfig = await refineDashboardWithGemini(
-        selectedLayout,
-        metadataPrompt,
-        prompt || "Verilerime uygun lüks bir dashboard tasarla."
-      );
+      let currentMetadata = metadata;
+      if (!currentMetadata) {
+        const synth = await synthesizeDatasetFromPrompt(prompt || "Genel Satış ve Gelir Analitiği");
+        const fullRows = [synth.headers, ...synth.rows];
+        setRawData(fullRows);
+        await DataHub.connect('text', { text: JSON.stringify(synth.rows.map(r => {
+          const obj = {};
+          synth.headers.forEach((h, i) => { obj[h] = r[i]; });
+          return obj;
+        })) });
+        currentMetadata = await analyzeSheet(fullRows, synth.sheetName);
+        setMetadata(currentMetadata);
+      }
 
-      setRefinedConfigs(prev => ({
-        ...prev,
-        [index]: refinedConfig
-      }));
+      const metadataPrompt = formatMetadataForPrompt(currentMetadata);
       
-      setActiveDashboard(refinedConfig);
+      // 1. FAST LOCAL BIND: Show the exact layout immediately with data bound!
+      const fastBoundLayout = bindDatasetToTemplates([selectedLayout], metadataPrompt)[0] || selectedLayout;
+      fastBoundLayout.image = selectedLayout.image;
+      fastBoundLayout.category = selectedLayout.category;
+      fastBoundLayout.id = selectedLayout.id;
+      setActiveDashboard(fastBoundLayout);
+      setMascotChat(`Harika seçim! Seçtiğin "${selectedLayout.title}" vizyonu anında verilerinle oluşturuldu. Gemini arka planda metrikleri ve başlıkları optimize ediyor...`);
+
+      // 2. FAST BACKGROUND GEMINI: Refine layout with user prompt and dataset context
+      setRefining(true);
+      modifyDashboardWithGemini(
+        fastBoundLayout,
+        metadataPrompt,
+        prompt || `Bu ${selectedLayout.title} vizyonuna uygun verileri en şık şekilde öne çıkar.`
+      ).then(refinedConfig => {
+        if (refinedConfig && (refinedConfig.widgets || refinedConfig.title)) {
+          const finalMerged = {
+            ...selectedLayout,
+            ...refinedConfig,
+            image: selectedLayout.image,
+            category: selectedLayout.category,
+            id: selectedLayout.id
+          };
+          setRefinedConfigs(prev => ({
+            ...prev,
+            [index]: finalMerged
+          }));
+          setActiveDashboard(finalMerged);
+          setMascotChat(`İşte hazır! Seçtiğin ${selectedLayout.title} vizyonu Gemini ile başarıyla tamamlandı.`);
+        }
+      }).catch(err => {
+        console.warn("Gemini refinement completed with fallback:", err);
+      }).finally(() => {
+        setRefining(false);
+      });
+
     } catch (err) {
-      console.error(err);
+      console.error("Dashboard bağlama hatası:", err);
       setActiveDashboard(uiConfigs[index]);
-    } finally {
       setRefining(false);
     }
   };
@@ -592,34 +742,69 @@ export default function AnalyzePage() {
         instruction
       );
 
-      // Cache the newly updated refined config as well
-      setRefinedConfigs(prev => ({
-        ...prev,
-        [selectedIndex]: refinedConfig
-      }));
+      if (refinedConfig && (refinedConfig.widgets || refinedConfig.title)) {
+        setRefinedConfigs(prev => ({
+          ...prev,
+          [selectedIndex]: refinedConfig
+        }));
 
-      setActiveDashboard(refinedConfig);
-      setMascotChat(`İşte istediğin güncellemeleri yaptım! Başka bir değişiklik istersen buradayım.`);
+        setActiveDashboard(refinedConfig);
+        setMascotChat(`İşte istediğin güncellemeleri yaptım! ("${instruction}" komutu uygulandı)`);
+        return;
+      }
+      throw new Error("Yapay zeka yanıt vermedi, yerel motor çalıştırılıyor.");
     } catch (err) {
-      console.error("Refinement error:", err);
-      // Local fallback in case of rate limits or errors
+      console.warn("Refinement AI error, executing local refinement engine:", err);
       try {
         const fallbackConfig = JSON.parse(JSON.stringify(currentConfig));
-        fallbackConfig.widgets = fallbackConfig.widgets.map(w => {
-          let updatedHtml = w.htmlTemplate;
-          if (lowerInstruction.includes('mavi') || lowerInstruction.includes('blue') || lowerInstruction.includes('lacivert')) {
-            updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-blue-950/70 border-blue-500/30 shadow-blue-500/10').replace(/border-white\/10/g, 'border-blue-500/20');
-          } else if (lowerInstruction.includes('yeşil') || lowerInstruction.includes('green') || lowerInstruction.includes('yeşil yap')) {
-            updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-emerald-950/70 border-emerald-500/30 shadow-emerald-500/10').replace(/border-white\/10/g, 'border-emerald-500/20');
-          } else if (lowerInstruction.includes('kırmızı') || lowerInstruction.includes('red') || lowerInstruction.includes('kırmızı yap')) {
-            updatedHtml = updatedHtml.replace(/bg-slate-900\/60/g, 'bg-rose-950/70 border-rose-500/30 shadow-rose-500/10').replace(/border-white\/10/g, 'border-rose-500/20');
-          }
-          return { ...w, htmlTemplate: updatedHtml };
-        });
-        setActiveDashboard(fallbackConfig);
-        setMascotChat(`Yerel tasarım motoru ile komutunuz uygulandı!`);
+        let modifiedAny = false;
+
+        // Clean user topic string (e.g. "a yap" -> "A Analizi", "satış paneli yap" -> "Satış Paneli")
+        let cleanTopic = instruction.trim();
+        cleanTopic = cleanTopic.replace(/\b(yap|yapılsın|getir|ekle|olsun|tasarla|değiştir)\b/gi, '').trim();
+        if (!cleanTopic) cleanTopic = "Özel Analiz Paneli";
+
+        // Update Dashboard Main Title
+        fallbackConfig.title = cleanTopic.toUpperCase() + (cleanTopic.length < 5 ? " ANALİZİ" : "");
+        modifiedAny = true;
+
+        if (fallbackConfig.widgets && Array.isArray(fallbackConfig.widgets)) {
+          fallbackConfig.widgets = fallbackConfig.widgets.map((w, wIdx) => {
+            let html = w.config?.htmlTemplate || w.htmlTemplate || '';
+            if (!html) return w;
+
+            // Update Inner Widget Titles / Headers inside HTML
+            html = html.replace(/<h4 class='([^']+)'>([^<]+)<\/h4>/gi, `<h4 class='$1'>${cleanTopic} - Kart ${wIdx + 1}</h4>`);
+            html = html.replace(/<div class='text-xs font-black text-([^']+) uppercase tracking-widest mb-2'>([^<]+)<\/div>/gi, `<div class='text-xs font-black text-$1 uppercase tracking-widest mb-2'>${cleanTopic} Metriği</div>`);
+
+            // Apply Theme Color changes if specified
+            if (lowerInstruction.includes('mavi') || lowerInstruction.includes('blue') || lowerInstruction.includes('lacivert')) {
+              html = html.replace(/from-\w+-\d+/g, 'from-blue-600').replace(/to-\w+-\d+/g, 'to-cyan-400').replace(/border-\w+-\d+/g, 'border-blue-500/30').replace(/text-\w+-\d+/g, 'text-blue-400');
+            } else if (lowerInstruction.includes('yeşil') || lowerInstruction.includes('green') || lowerInstruction.includes('zümrüt')) {
+              html = html.replace(/from-\w+-\d+/g, 'from-emerald-600').replace(/to-\w+-\d+/g, 'to-teal-400').replace(/border-\w+-\d+/g, 'border-emerald-500/30').replace(/text-\w+-\d+/g, 'text-emerald-400');
+            } else if (lowerInstruction.includes('kırmızı') || lowerInstruction.includes('red') || lowerInstruction.includes('pembe')) {
+              html = html.replace(/from-\w+-\d+/g, 'from-rose-600').replace(/to-\w+-\d+/g, 'to-pink-500').replace(/border-\w+-\d+/g, 'border-rose-500/30').replace(/text-\w+-\d+/g, 'text-rose-400');
+            } else if (lowerInstruction.includes('mor') || lowerInstruction.includes('purple')) {
+              html = html.replace(/from-\w+-\d+/g, 'from-purple-600').replace(/to-\w+-\d+/g, 'to-indigo-400').replace(/border-\w+-\d+/g, 'border-purple-500/30').replace(/text-\w+-\d+/g, 'text-purple-400');
+            }
+
+            if (!w.config) w.config = {};
+            w.config.htmlTemplate = html;
+            w.htmlTemplate = html;
+            return w;
+          });
+        }
+
+        if (modifiedAny) {
+          setRefinedConfigs(prev => ({
+            ...prev,
+            [selectedIndex]: fallbackConfig
+          }));
+          setActiveDashboard(fallbackConfig);
+          setMascotChat(`"${instruction}" komutunuza uygun olarak hem dashboard başlığı hem de tüm kart içerikleri güncellendi!`);
+        }
       } catch (fallbackErr) {
-        setMascotChat(`Üzgünüm, şu an teknik bir sorun yaşıyorum. Lütfen tekrar dene.`);
+        setMascotChat(`Üzgünüm, şu an teknik bir sorun yaşıyorum. Lütfen tekrar deneyin.`);
       }
     } finally {
       setTimeout(() => setRefining(false), 100);
@@ -712,7 +897,7 @@ export default function AnalyzePage() {
 
   const handleSwipeLeft = () => {
     setSwipeDirection('left');
-    setMascotChat("Tamam, bu konsepti beğenmedin. Sıradaki tasarımı inceleyelim!");
+    setMascotChat("Bu tasarımı beğenmedin. Sıradaki vizyon konseptini inceliyoruz!");
     setTimeout(() => {
       const nextCount = rejectedCount + 1;
       setRejectedCount(nextCount);
@@ -734,7 +919,7 @@ export default function AnalyzePage() {
 
   const handleSwipeUp = () => {
     setSwipeDirection('up');
-    setMascotChat("Bu tasarımı fena bulmadın! Farklı yerleşimleri de gördükten sonra en iyisine karar veririz.");
+    setMascotChat("Bu tasarımı 'Belki' olarak not aldım. Diğer vizyon konseptlerini de inceleyelim!");
     setTimeout(() => {
       setCurrentCardIndex((prev) => (prev + 1) % uiConfigs.length);
       setSwipeDirection(null);
@@ -743,7 +928,7 @@ export default function AnalyzePage() {
 
   const handleSwipeRight = () => {
     setSwipeDirection('right');
-    setMascotChat("Harika! Bu tasarımı çok beğendin. Şimdi onu gerçek verilerinle giydiriyorum...");
+    setMascotChat("Harika! Bu tasarımı beğendin. Şimdi seçilen vizyonu gerçek verilerinle anında oluşturuyorum...");
     setTimeout(() => {
       handleSelect(currentCardIndex);
       setSwipeDirection(null);
@@ -873,7 +1058,11 @@ export default function AnalyzePage() {
     }
   };
 
-  if (!user) return null;
+  const effectiveUser = user || {
+    name: 'Demo Analist',
+    email: 'demo@sheetcanvas.ai',
+    picture: 'https://api.dicebear.com/7.x/avataaars/svg?seed=SheetCanvas'
+  };
 
   if (step === 'complete' && uiConfigs.length > 0) {
     return (
@@ -1029,116 +1218,176 @@ export default function AnalyzePage() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-8 max-w-md mx-auto">
-                <div className="text-center space-y-3">
-                  <h2 className="text-3xl font-black tracking-tight text-white uppercase tracking-widest">Vizyonunu Seç</h2>
-                  <p className="text-slate-400 text-xs font-semibold">Tasarım konseptlerini kaydırarak seç: Sola kaydır (Beğenmedim), Sağa kaydır (Beğendim!)</p>
+              <div className="space-y-6 max-w-lg mx-auto">
+                <div className="text-center space-y-2">
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-[10px] font-black uppercase tracking-widest text-blue-400">
+                    <Sparkles size={12} /> Yapay Zeka Vizyon Motoru
+                  </div>
+                  <h2 className="text-3xl font-black tracking-tight text-white uppercase tracking-widest">Vizyon Konseptini Seç</h2>
+                  <p className="text-slate-400 text-xs font-semibold">Tasarım vizyonunu seç: Sola kaydır (Beğenmedim), Yukarı kaydır (Belki), Sağa kaydır (Beğen!)</p>
                 </div>
 
-              {/* Stack Container */}
-              <div className="relative aspect-[4/5] w-full flex items-center justify-center">
-                {uiConfigs.map((layout, idx) => {
-                  if (idx !== currentCardIndex && idx !== (currentCardIndex + 1) % uiConfigs.length) return null;
-                  
-                  const isTop = idx === currentCardIndex;
-                  
-                  let swipeClass = "";
-                  if (isTop && swipeDirection) {
-                    if (swipeDirection === 'left') swipeClass = "translate-x-[-150%] rotate-[-20deg] opacity-0 scale-95 transition-all duration-300 ease-out";
-                    if (swipeDirection === 'right') swipeClass = "translate-x-[150%] rotate-[20deg] opacity-0 scale-95 transition-all duration-300 ease-out";
-                    if (swipeDirection === 'up') swipeClass = "translate-y-[-150%] opacity-0 scale-95 transition-all duration-300 ease-out";
-                  }
+                {/* Stack Container */}
+                <div className="relative aspect-[4/5] w-full flex items-center justify-center">
+                  {uiConfigs.map((layout, idx) => {
+                    if (idx !== currentCardIndex && idx !== (currentCardIndex + 1) % uiConfigs.length) return null;
+                    
+                    const isTop = idx === currentCardIndex;
+                    
+                    let swipeClass = "";
+                    if (isTop && swipeDirection) {
+                      if (swipeDirection === 'left') swipeClass = "translate-x-[-150%] rotate-[-20deg] opacity-0 scale-95 transition-all duration-300 ease-out";
+                      if (swipeDirection === 'right') swipeClass = "translate-x-[150%] rotate-[20deg] opacity-0 scale-95 transition-all duration-300 ease-out";
+                      if (swipeDirection === 'up') swipeClass = "translate-y-[-150%] opacity-0 scale-95 transition-all duration-300 ease-out";
+                    }
 
-                  const zIndex = isTop ? 30 : 20;
-                  const scaleOffset = isTop ? 1 : 0.95;
-                  const rotateOffset = isTop ? 0 : 3;
-                  const translateYOffset = isTop ? 0 : 8;
+                    const zIndex = isTop ? 30 : 20;
+                    const scaleOffset = isTop ? 1 : 0.95;
+                    const rotateOffset = isTop ? 0 : 3;
+                    const translateYOffset = isTop ? 0 : 8;
 
-                  return (
-                    <div 
-                      key={idx} 
-                      className={`absolute inset-0 bg-slate-900 border border-white/10 rounded-[40px] p-2 overflow-hidden shadow-2xl flex flex-col justify-between transition-all duration-300 ${swipeClass}`}
-                      style={{
-                        zIndex,
-                        transform: !isTop ? `scale(${scaleOffset}) translateY(${translateYOffset}px) rotate(${rotateOffset}deg)` : undefined,
-                        opacity: isTop ? 1 : 0.6,
-                        pointerEvents: isTop ? 'auto' : 'none'
-                      }}
-                    >
-                      {/* Wireframe Mockup Visual */}
-                      <div className="flex-1 relative overflow-hidden rounded-[32px] opacity-70">
-                        <div className="absolute inset-0 overflow-hidden scale-[0.9] origin-center">
-                          <div className="w-[300%] h-[300%] transform scale-[0.333] origin-top-left p-8">
-                            <DynamicDashboard
-                              uiConfig={layout}
-                              spreadsheetId={spreadsheetId}
-                              mockMode={true}
-                              metadata={metadata}
-                            />
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`absolute inset-0 bg-slate-900 border border-white/10 rounded-[40px] p-2.5 overflow-hidden shadow-2xl flex flex-col justify-between transition-all duration-300 ${swipeClass}`}
+                        style={{
+                          zIndex,
+                          transform: !isTop ? `scale(${scaleOffset}) translateY(${translateYOffset}px) rotate(${rotateOffset}deg)` : undefined,
+                          opacity: isTop ? 1 : 0.6,
+                          pointerEvents: isTop ? 'auto' : 'none'
+                        }}
+                      >
+                        {/* Floating Swipe Feedback Stamp */}
+                        {isTop && swipeDirection === 'right' && (
+                          <div className="absolute top-8 right-8 z-50 px-6 py-2 border-4 border-emerald-400 text-emerald-400 font-black text-2xl uppercase rounded-2xl rotate-12 bg-slate-950/90 backdrop-blur-md shadow-2xl animate-pulse">
+                            BEĞENDİM
                           </div>
+                        )}
+                        {isTop && swipeDirection === 'left' && (
+                          <div className="absolute top-8 left-8 z-50 px-6 py-2 border-4 border-rose-500 text-rose-500 font-black text-2xl uppercase rounded-2xl -rotate-12 bg-slate-950/90 backdrop-blur-md shadow-2xl animate-pulse">
+                            BEĞENMEDİM
+                          </div>
+                        )}
+                        {isTop && swipeDirection === 'up' && (
+                          <div className="absolute top-8 inset-x-0 mx-auto w-fit z-50 px-6 py-2 border-4 border-amber-400 text-amber-400 font-black text-2xl uppercase rounded-2xl bg-slate-950/90 backdrop-blur-md shadow-2xl animate-pulse">
+                            BELKİ
+                          </div>
+                        )}
+
+                        {/* Wireframe Mockup Visual / Real Canvas Image */}
+                        <div className="flex-1 relative overflow-hidden rounded-[32px] bg-slate-950/60 flex items-center justify-center">
+                          {layout.image ? (
+                            <img 
+                              src={layout.image} 
+                              alt={layout.title || "Canvas Tasarımı"} 
+                              className="w-full h-full object-cover object-top rounded-[32px] transition-transform duration-500 hover:scale-105" 
+                            />
+                          ) : (
+                            <div className="absolute inset-0 overflow-hidden scale-[0.9] origin-center opacity-70">
+                              <div className="w-[300%] h-[300%] transform scale-[0.333] origin-top-left p-8">
+                                <DynamicDashboard
+                                  uiConfig={layout}
+                                  spreadsheetId={spreadsheetId}
+                                  mockMode={true}
+                                  metadata={metadata}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Info overlay */}
+                        <div className="p-6 bg-slate-950/85 rounded-[32px] border border-white/5 space-y-2 relative z-45 backdrop-blur-md">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Öneri {idx + 1} / {uiConfigs.length}</span>
+                            <span className="text-[10px] text-slate-400 font-bold bg-white/5 px-2.5 py-0.5 rounded-full">{layout.category || "Dashboard"}</span>
+                          </div>
+                          <h3 className="text-xl font-black text-white uppercase leading-tight">{layout.title || "Stratejik Analiz"}</h3>
+                          <p className="text-slate-400 text-xs leading-relaxed font-medium line-clamp-2">
+                            {layout.description || "Verilerinize uygun, kullanıcı dostu ve profesyonel bir veri görselleştirme stratejisi."}
+                          </p>
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
 
-                      {/* Info overlay */}
-                      <div className="p-6 bg-slate-950/80 rounded-[32px] border border-white/5 space-y-2 relative z-45">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[9px] font-black text-blue-400 uppercase tracking-[0.3em]">Öneri {idx + 1} / {uiConfigs.length}</span>
-                          <h3 className="text-lg font-black text-white uppercase leading-tight">{layout.title || "Stratejik Analiz"}</h3>
-                        </div>
-                        <p className="text-slate-400 text-xs leading-relaxed font-medium line-clamp-3">
-                          {layout.description || "Verilerinize uygun, kullanıcı dostu ve profesyonel bir veri görselleştirme stratejisi."}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+                {/* Swipe Action Buttons */}
+                <div className="flex items-center justify-center gap-8 pt-4">
+                  {/* Sola Kaydır / Beğenmedim */}
+                  <div className="flex flex-col items-center gap-2">
+                    <button
+                      onClick={handleSwipeLeft}
+                      disabled={refining}
+                      className="w-16 h-16 bg-slate-900 hover:bg-rose-950/40 border-2 border-rose-500/30 hover:border-rose-500 text-rose-500 rounded-full flex items-center justify-center transition-all shadow-xl shadow-rose-950/20 active:scale-95 group"
+                      title="Beğenmedim (Sola Kaydır)"
+                    >
+                      <ThumbsDown size={24} className="group-hover:scale-110 transition-transform" />
+                    </button>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-rose-400">Beğenmedim</span>
+                  </div>
+
+                  {/* Yukarı Kaydır / Belki */}
+                  <div className="flex flex-col items-center gap-2">
+                    <button
+                      onClick={handleSwipeUp}
+                      disabled={refining}
+                      className="w-14 h-14 bg-slate-900 hover:bg-amber-950/40 border-2 border-amber-500/30 hover:border-amber-500 text-amber-500 rounded-full flex items-center justify-center transition-all shadow-lg shadow-amber-950/20 active:scale-95 group"
+                      title="Belki (Yukarı Kaydır)"
+                    >
+                      <Smile size={22} className="group-hover:scale-110 transition-transform" />
+                    </button>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">Belki</span>
+                  </div>
+
+                  {/* Sağa Kaydır / Beğen */}
+                  <div className="flex flex-col items-center gap-2">
+                    <button
+                      onClick={handleSwipeRight}
+                      disabled={refining}
+                      className="w-16 h-16 bg-slate-900 hover:bg-emerald-950/40 border-2 border-emerald-500/30 hover:border-emerald-500 text-emerald-400 rounded-full flex items-center justify-center transition-all shadow-xl shadow-emerald-950/20 active:scale-95 group"
+                      title="Beğendim! (Sağa Kaydır)"
+                    >
+                      <Heart size={26} className="group-hover:scale-110 transition-transform fill-emerald-500/20" />
+                    </button>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400">Beğen</span>
+                  </div>
+                </div>
               </div>
-
-              {/* Swipe Action Buttons */}
-              <div className="flex items-center justify-center gap-6 pt-4">
-                <button
-                  onClick={handleSwipeLeft}
-                  disabled={refining}
-                  className="w-16 h-16 bg-slate-900 hover:bg-rose-950/20 border border-rose-500/20 hover:border-rose-500/50 text-rose-500 rounded-full flex items-center justify-center transition-all shadow-lg active:scale-95 group"
-                  title="Beğenmedim (Sola Kaydır)"
-                >
-                  <ThumbsDown size={24} className="group-hover:scale-110 transition-transform" />
-                </button>
-
-                <button
-                  onClick={handleSwipeUp}
-                  disabled={refining}
-                  className="w-14 h-14 bg-slate-900 hover:bg-amber-950/20 border border-amber-500/20 hover:border-amber-500/50 text-amber-500 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 group"
-                  title="Fena Değil (Yukarı Kaydır)"
-                >
-                  <Smile size={20} className="group-hover:scale-110 transition-transform" />
-                </button>
-
-                <button
-                  onClick={handleSwipeRight}
-                  disabled={refining}
-                  className="w-16 h-16 bg-slate-900 hover:bg-emerald-950/20 border border-emerald-500/20 hover:border-emerald-500/50 text-emerald-500 rounded-full flex items-center justify-center transition-all shadow-lg active:scale-95 group"
-                  title="Beğendim! (Sağa Kaydır)"
-                >
-                  <Heart size={24} className="group-hover:scale-110 transition-transform" />
-                </button>
-              </div>
-            </div>
           )
         ) : (
             <div className="flex flex-col lg:flex-row gap-8">
               {/* Main Dashboard Area */}
               <div className="flex-1 min-w-0">
                 <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-8 bg-white/5 p-6 rounded-[32px] border border-white/10 backdrop-blur-xl">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-1">
-                      <Sparkles size={20} className="text-blue-400" />
-                      <h2 className="text-2xl font-black tracking-tight">{activeDashboard?.title || uiConfigs[selectedIndex].title}</h2>
-                      <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-black uppercase tracking-widest">
-                        Aktif Tasarım
-                      </span>
+                  <div className="flex items-center gap-5 flex-1 min-w-0">
+                    {(activeDashboard?.image || uiConfigs[selectedIndex]?.image) && (
+                      <div className="relative group shrink-0">
+                        <img 
+                          src={activeDashboard?.image || uiConfigs[selectedIndex]?.image} 
+                          alt="Seçilen Vizyon Tasarımı" 
+                          className="w-24 h-16 object-cover object-top rounded-2xl border-2 border-blue-500/30 shadow-xl shadow-blue-500/10 transition-transform group-hover:scale-105" 
+                        />
+                        <span className="absolute -bottom-2 -right-2 px-2 py-0.5 bg-blue-600 text-[8px] font-black uppercase tracking-widest text-white rounded-lg shadow-md">
+                          Vizyon
+                        </span>
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-3 mb-1 flex-wrap">
+                        <Sparkles size={18} className="text-blue-400 shrink-0" />
+                        <h2 className="text-2xl font-black tracking-tight truncate">{activeDashboard?.title || uiConfigs[selectedIndex]?.title}</h2>
+                        <span className="px-3 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-black uppercase tracking-widest shrink-0">
+                          Seçilen Vizyona Özel Canlı Dashboard
+                        </span>
+                        {(activeDashboard?.category || uiConfigs[selectedIndex]?.category) && (
+                          <span className="px-2.5 py-0.5 bg-white/5 text-slate-300 border border-white/10 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0">
+                            {activeDashboard?.category || uiConfigs[selectedIndex]?.category}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-400 text-xs italic line-clamp-1">{activeDashboard?.subtitle || uiConfigs[selectedIndex]?.subtitle}</p>
                     </div>
-                    <p className="text-slate-400 text-sm italic">{activeDashboard?.subtitle || uiConfigs[selectedIndex].subtitle}</p>
                   </div>
 
                   <div className="flex items-center gap-4">
@@ -1230,9 +1479,14 @@ export default function AnalyzePage() {
 
                 <div className="relative group">
                   {refining && (
-                    <div className="absolute inset-0 z-50 bg-[#0F172A]/40 backdrop-blur-sm rounded-[32px] flex flex-col items-center justify-center animate-fadeIn">
-                      <Loader2 size={48} className="animate-spin text-blue-500 mb-4" />
-                      <p className="font-bold text-white tracking-widest uppercase text-xs">Updating...</p>
+                    <div className="absolute inset-0 z-50 bg-[#0F172A]/85 backdrop-blur-md rounded-[32px] flex flex-col items-center justify-center animate-fadeIn p-6 text-center shadow-2xl border border-blue-500/30">
+                      <div className="w-16 h-16 rounded-full bg-blue-600/20 border border-blue-500/40 flex items-center justify-center mb-4 animate-pulse">
+                        <Sparkles size={32} className="animate-spin text-blue-400" />
+                      </div>
+                      <h4 className="text-lg font-black text-white tracking-wide uppercase mb-1">Gemini & Groq AI Tasarımı Üretiyor...</h4>
+                      <p className="text-xs text-blue-300 font-medium max-w-md leading-relaxed">
+                        Seçtiğiniz Vizyon Konsepti, Akademik Prompt ve Canlı Veri Setiniz Yapay Zeka Motoruna Aktarılıyor
+                      </p>
                     </div>
                   )}
                   {activeDashboard && (
@@ -1586,26 +1840,40 @@ export default function AnalyzePage() {
             </div>
           )}
 
-          {step === 'analyzed' && metadata && (
-            <div className="text-left space-y-8 animate-fadeIn">
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex items-center gap-3 text-emerald-400">
-                <CheckCircle size={20} />
-                <span className="font-bold text-sm">Analiz Tamam!</span>
+          {step === 'analyzed' && (
+            <div className="glass-panel max-w-2xl mx-auto p-8 rounded-[32px] border-white/10 shadow-2xl space-y-6 animate-fadeIn text-left">
+              {/* Header Info */}
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between text-emerald-400">
+                <div className="flex items-center gap-3">
+                  <CheckCircle size={22} className="text-emerald-400 shrink-0" />
+                  <div>
+                    <h3 className="font-black text-sm uppercase tracking-wider text-white">Veri Seti Analizi Tamamlandı</h3>
+                    <p className="text-xs text-emerald-400/90 font-medium">Hedef promptunuzu yazın, bir sonraki sayfada vizyon kart destesini inceleyin.</p>
+                  </div>
+                </div>
+                {metadata && (
+                  <div className="flex gap-2 text-xs font-bold text-slate-300 shrink-0">
+                    <span className="bg-slate-900/80 px-3 py-1.5 rounded-xl border border-white/5">{metadata.rowCount} Satır</span>
+                    <span className="bg-slate-900/80 px-3 py-1.5 rounded-xl border border-white/5">{metadata.headers.length} Sütun</span>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-4">
-                <InfoCard label="Sayfa" value={metadata.sheetName} icon={<Layout size={14} />} />
-                <InfoCard label="Satır" value={metadata.rowCount} icon={<Layers size={14} />} />
-                <InfoCard label="Sütun" value={metadata.headers.length} icon={<Columns size={14} />} />
-              </div>
 
-
-
+              {/* Prompt Input Section */}
               <div className="space-y-3">
-                <label className="block text-sm font-bold text-slate-400 ml-1">Dashboard Talimatı</label>
-                <textarea className="w-full h-32 bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-all resize-none" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Örn: Satışları analiz et..." />
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-blue-600/20 border border-blue-500/30 text-blue-400 font-black text-xs flex items-center justify-center">1</div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Tasarım & Analiz Hedefinizi Girin (Prompt)</h3>
+                </div>
+                <textarea 
+                  className="w-full h-28 bg-slate-950/60 border border-white/10 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-all resize-none placeholder:text-slate-500 font-medium" 
+                  value={prompt} 
+                  onChange={(e) => setPrompt(e.target.value)} 
+                  placeholder="Örn: Ciro trendi, performans verileri ve özet metrikleri gösteren lüks koyu temalı bir dashboard yap..." 
+                />
                 
                 <div className="space-y-1.5">
-                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider ml-1">Önerilen Promptlar:</span>
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider ml-1">Önerilen Prompt İstemleri:</span>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -1628,12 +1896,25 @@ export default function AnalyzePage() {
                     >
                       📊 Performans Odaklı Yönetici
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrompt("Operasyonel stok, lojistik teslimat ve depo kritik durumlarını göster")}
+                      className="px-3 py-1.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] text-slate-300 hover:text-white hover:border-amber-500/30 transition-all font-semibold"
+                    >
+                      📦 Operasyon & Depo
+                    </button>
                   </div>
                 </div>
               </div>
-              <button onClick={handleGenerateDashboard} disabled={generating} className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-emerald-600/20 flex items-center justify-center gap-3 text-lg">
-                {generating ? <Loader2 size={24} className="animate-spin" /> : <Sparkles size={24} />}
-                {generating ? 'Tasarım Yapılıyor...' : 'AI Dashboard Oluştur'}
+
+              {/* Action Button: To Vision Tinder Deck! */}
+              <button 
+                onClick={handleProceedToVisionDeck} 
+                disabled={analyzing} 
+                className="w-full py-5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black rounded-2xl transition-all shadow-2xl shadow-blue-600/30 flex items-center justify-center gap-3 text-sm uppercase tracking-widest active:scale-[0.99]"
+              >
+                {analyzing ? <Loader2 size={20} className="animate-spin" /> : <Sparkles size={20} />}
+                {analyzing ? 'Vizyon Konseptleri Eşleştiriliyor...' : 'VİZYON KONSEPTLERİNİ İNCELE (TİNDER DESTESİ) →'}
               </button>
             </div>
           )}

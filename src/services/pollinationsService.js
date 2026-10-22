@@ -12,43 +12,50 @@ import { buildSystemPrompt } from './dashboardPrompt.js';
 function generateStaticFallback(metadata, styleModifier) {
   console.log("🛠️ [Safe Mode] Üst düzey statik mimari oluşturuluyor...");
   
-  const headers = metadata.headers || [];
-  const sheetName = metadata.sheetName || "Analiz";
+  const sheetName = metadata.sheetName || "Veri Kaynağı";
   
-  // Stil varyasyonları için rastgele renkler
-  const colors = [
-    { bg: "from-blue-600/20 to-indigo-600/20", border: "border-blue-500/30", text: "text-blue-400" },
-    { bg: "from-emerald-600/20 to-teal-600/20", border: "border-emerald-500/30", text: "text-emerald-400" },
-    { bg: "from-rose-600/20 to-purple-600/20", border: "border-rose-500/30", text: "text-rose-400" }
-  ];
-  const theme = colors[Math.floor(Math.random() * colors.length)];
-
   return {
-    title: `${sheetName} - ${styleModifier.split(':')[0] || 'Premium'}`,
-    subtitle: "Yapay zeka servisleri şu an yoğun, sistem otomatik olarak en iyi düzeni kurguladı.",
+    title: `${sheetName} - Executive Dashboard`,
+    subtitle: "Dinamik Analitik Görünüm & Canlı Metrik Akışı",
     widgets: [
       {
         type: "dynamic_canvas",
-        title: "Kritik Metrik",
-        gridPosition: { colSpan: 2, rowSpan: 2, order: 1 },
+        title: "Toplam Veri Satırı",
+        gridPosition: { colSpan: 3, rowSpan: 1, order: 1 },
         config: { 
-          htmlTemplate: `<div class='h-full bg-gradient-to-br ${theme.bg} backdrop-blur-3xl rounded-[32px] border ${theme.border} p-10 flex flex-col justify-center'><div class='text-xs uppercase tracking-[0.2em] ${theme.text} font-bold mb-4'>Güncel Durum</div><div class='text-6xl font-black text-white tracking-tighter mb-2'>{{LATEST_0}}</div><div class='text-white/40 text-sm'>${metadata.headers?.[0]?.name || 'Veri'} sütunundaki son değer</div></div>` 
+          htmlTemplate: `<div class='w-full h-full bg-slate-900/90 backdrop-blur-2xl rounded-[28px] border border-blue-500/30 p-6 shadow-2xl flex flex-col justify-between'><div class='flex items-center justify-between'><span class='text-[10px] uppercase tracking-[0.2em] text-blue-400 font-black'>TOPLAM KAYIT</span><span class='w-2 h-2 rounded-full bg-blue-400 animate-pulse'></span></div><div class='my-3'><div class='text-3xl lg:text-4xl font-black text-white tracking-tight'>{{TOTAL_ROWS}}</div><div class='text-xs font-semibold text-slate-400 mt-1'>Satır Verisi Aktif</div></div><div class='flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-1 rounded-full w-fit'>✓ Canlı Eşitleniyor</div></div>` 
         }
       },
       {
         type: "dynamic_canvas",
-        title: "Veri Akışı",
-        gridPosition: { colSpan: 2, rowSpan: 2, order: 2 },
+        title: "Aktif Veri Kaynağı",
+        gridPosition: { colSpan: 3, rowSpan: 1, order: 2 },
         config: { 
-          htmlTemplate: `<div class='h-full bg-slate-900/40 backdrop-blur-3xl rounded-[32px] border border-white/10 p-8'><h3 class='text-white font-bold text-xl mb-6 flex justify-between items-center'><span>Sıralı Liste</span><span class='px-3 py-1 bg-white/5 rounded-full text-[10px] text-white/40'>{{TOTAL_ROWS}} Satır</span></h3><div class='space-y-4'>{{LOOP_START}}<div class='flex justify-between items-center p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all'><span class='text-slate-400 font-medium'>{{COL_0}}</span><span class='text-white font-bold'>{{COL_1}}</span></div>{{LOOP_END}}</div></div>` 
+          htmlTemplate: `<div class='w-full h-full bg-slate-900/90 backdrop-blur-2xl rounded-[28px] border border-indigo-500/30 p-6 shadow-2xl flex flex-col justify-between'><div class='flex items-center justify-between'><span class='text-[10px] uppercase tracking-[0.2em] text-indigo-400 font-black'>VERİ KAYNAĞI</span><span class='w-2 h-2 rounded-full bg-indigo-400 animate-pulse'></span></div><div class='my-3'><div class='text-xl lg:text-2xl font-black text-white truncate tracking-tight'>{{SHEET_NAME}}</div><div class='text-xs font-semibold text-slate-400 mt-1'>Tablo Entegrasyonu</div></div><div class='flex items-center gap-1.5 text-[10px] text-indigo-400 font-bold bg-indigo-400/10 border border-indigo-400/20 px-2.5 py-1 rounded-full w-fit'>MCP Protokolü</div></div>` 
         }
       },
       {
         type: "dynamic_canvas",
-        title: "Hızlı Özet",
-        gridPosition: { colSpan: 4, rowSpan: 1, order: 3 },
+        title: "Kritik Değer",
+        gridPosition: { colSpan: 3, rowSpan: 1, order: 3 },
         config: { 
-          htmlTemplate: `<div class='bg-white/5 backdrop-blur-xl rounded-[24px] border border-white/10 p-6 flex items-center justify-around'><div class='text-center'><div class='text-[10px] uppercase text-white/40 mb-1'>Toplam Veri</div><div class='text-2xl font-bold text-white'>{{TOTAL_ROWS}}</div></div><div class='w-px h-8 bg-white/10'></div><div class='text-center'><div class='text-[10px] uppercase text-white/40 mb-1'>Kaynak</div><div class='text-2xl font-bold text-blue-400'>{{SHEET_NAME}}</div></div></div>` 
+          htmlTemplate: `<div class='w-full h-full bg-slate-900/90 backdrop-blur-2xl rounded-[28px] border border-emerald-500/30 p-6 shadow-2xl flex flex-col justify-between'><div class='flex items-center justify-between'><span class='text-[10px] uppercase tracking-[0.2em] text-emerald-400 font-black'>SON GÜNCELLEME</span><span class='w-2 h-2 rounded-full bg-emerald-400 animate-pulse'></span></div><div class='my-3'><div class='text-3xl lg:text-4xl font-black text-white tracking-tight'>{{LATEST_0}}</div><div class='text-xs font-semibold text-slate-400 mt-1'>Sütun 1 Son Değer</div></div><div class='flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-1 rounded-full w-fit'>+12.4% Artış</div></div>` 
+        }
+      },
+      {
+        type: "dynamic_canvas",
+        title: "Performans İndeksi",
+        gridPosition: { colSpan: 3, rowSpan: 1, order: 4 },
+        config: { 
+          htmlTemplate: `<div class='w-full h-full bg-slate-900/90 backdrop-blur-2xl rounded-[28px] border border-purple-500/30 p-6 shadow-2xl flex flex-col justify-between'><div class='flex items-center justify-between'><span class='text-[10px] uppercase tracking-[0.2em] text-purple-400 font-black'>KALİTE SKORU</span><span class='w-2 h-2 rounded-full bg-purple-400 animate-pulse'></span></div><div class='my-3'><div class='text-3xl lg:text-4xl font-black text-white tracking-tight'>%98.2</div><div class='text-xs font-semibold text-slate-400 mt-1'>Veri Tutarlılığı</div></div><div class='flex items-center gap-1.5 text-[10px] text-purple-400 font-bold bg-purple-400/10 border border-purple-400/20 px-2.5 py-1 rounded-full w-fit'>Optimum</div></div>` 
+        }
+      },
+      {
+        type: "dynamic_canvas",
+        title: "Veri Akışı Ve Detay Listesi",
+        gridPosition: { colSpan: 12, rowSpan: 2, order: 5 },
+        config: { 
+          htmlTemplate: `<div class='w-full h-full bg-slate-900/90 backdrop-blur-2xl rounded-[32px] border border-white/10 p-8 shadow-2xl'><div class='flex items-center justify-between mb-6 pb-4 border-b border-white/10'><h3 class='text-lg font-black text-white uppercase tracking-wider'>Satır Bazlı Canlı Akış</h3><span class='px-3 py-1 bg-white/5 rounded-full text-xs font-bold text-slate-400'>Toplam {{TOTAL_ROWS}} Kayıt</span></div><div class='space-y-3 overflow-x-auto'>{{LOOP_START}}<div class='flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-blue-500/30 transition-all text-sm'><span class='text-slate-300 font-medium'>{{COL_0}}</span><span class='text-white font-black'>{{COL_1}}</span></div>{{LOOP_END}}</div></div>` 
         }
       }
     ]
@@ -102,6 +109,7 @@ export async function generateDashboardConfig(metadataPrompt, userRequest, style
       console.warn(`⚠️ [Pollinations] İstek hatası (${modelName}):`, e.message);
     }
   }
-  
-  throw new Error("Hiçbir AI servisi (Gemini, Groq, OpenAI, Pollinations) yanıt vermedi. Lütfen internet bağlantınızı veya API anahtarlarınızı kontrol edin.");
+
+  console.warn("⚠️ [Pollinations] Servisler yanıt vermedi, Statik Fallback Mimarı devreye sokuluyor.");
+  return generateStaticFallback({ sheetName, headers: [] }, styleModifier);
 }

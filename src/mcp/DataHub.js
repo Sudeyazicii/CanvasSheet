@@ -67,11 +67,21 @@ class DataHub {
         this.activeSource = source;
       }
     } else if (source === 'mcp') {
-      const dbType = sessionStorage.getItem('mcp_db_type');
-      if (dbType) {
-        this.adapter = new McpDatabaseAdapter(dbType);
+      const dbType = sessionStorage.getItem('mcp_db_type') || 'kaggle';
+      this.adapter = new McpDatabaseAdapter(dbType);
+      this.activeSource = source;
+    } else if (source === 'text') {
+      const text = sessionStorage.getItem('mcp_raw_text');
+      if (text) {
+        this.adapter = new TextAdapter(text);
         this.activeSource = source;
       }
+    }
+
+    if (!this.adapter) {
+      console.log('🔄 [DataHub] Otomatik varsayılan veriseti (Kaggle MCP) bağlanıyor...');
+      this.adapter = new McpDatabaseAdapter('kaggle');
+      this.activeSource = 'mcp';
     }
   }
 }

@@ -38,7 +38,7 @@ Neşeli, zeki ve samimisin. Cevapların kısa (en fazla 2 cümle) ve motive edic
           ...this.history,
           { role: "user", content: message }
         ],
-        model: "llama-3.3-70b-versatile",
+        model: import.meta.env.VITE_GROQ_MODEL?.trim() || "groq/compound",
         temperature: 0.8,
         max_tokens: 150,
       });

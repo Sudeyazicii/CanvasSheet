@@ -27,20 +27,30 @@ export class GoogleSheetAdapter {
   }
 
   subscribe(range, callback) {
-    console.log(`🔄 [Sheets] Polling subscription started for ${range}...`);
+    if (!this.accessToken || !this.spreadsheetId) {
+      return () => {};
+    }
+
+    let previousDataJson = JSON.stringify(this.dataCache[range] || null);
+
     const intervalId = setInterval(async () => {
       try {
         const data = await readSheet(this.accessToken, this.spreadsheetId, range);
-        this.dataCache[range] = data;
-        callback(data);
+        if (!data || !Array.isArray(data)) return;
+        
+        const newDataJson = JSON.stringify(data);
+        if (newDataJson !== previousDataJson) {
+          previousDataJson = newDataJson;
+          this.dataCache[range] = data;
+          callback(data);
+        }
       } catch (err) {
-        console.error('Polling error:', err);
+        // Silently catch network or auth errors during background polling
       }
-    }, 5000); // 5 seconds
+    }, 30000);
 
     return () => {
       clearInterval(intervalId);
-      console.log(`🛑 [Sheets] Polling stopped for ${range}.`);
     };
   }
 }

@@ -1,0 +1,37 @@
+[
+  {
+    "id": 1,
+    "gorsel_dosyasi": "54af25b5acbc8641415498be3d7cadf7369bf45e.avif",
+    "kategori": "Yönetici Özeti (KPI)",
+    "akademik_prompt": "Organizasyonun aylık toplam cirosunu, bölge bazlı satış dağılımını ve en yüksek performans gösteren ilk 5 satış temsilcisini etkileşimli grafiklerle sunan modern bir yönetici paneli (dashboard) simüle et.",
+    "json_ui_schema": { "layout_type": "kpi_main", "charts": ["kpi_card", "line_trend", "donut_progress", "data_table"] }
+  },
+  {
+    "id": 2,
+    "gorsel_dosyasi": "Frame 696.png",
+    "kategori": "İnsan Kaynakları (HR)",
+    "akademik_prompt": "Şirket genelindeki personel sayısını, departman bazlı işe alım oranlarını ve çalışan memnuniyeti anket sonuçlarını çalışma zamanında (runtime) dinamik olarak inşa edecek bir analitik panel konfigürasyonu üret.",
+    "json_ui_schema": { "layout_type": "distribution_focused", "charts": ["kpi_card", "pie_distribution", "bar_pipeline", "data_table"] }
+  },
+  {
+    "id": 3,
+    "gorsel_dosyasi": "Poster (2).png",
+    "kategori": "Operasyon/Stok",
+    "akademik_prompt": "Depolardaki anlık stok durumunu, kritik seviyenin altındaki ürünlerin listesini ve tedarik zinciri gecikme trendlerini Model Context Protocol (MCP) standartlarına uygun bir JSON UI şeması olarak yapılandır.",
+    "json_ui_schema": { "layout_type": "operational_grid", "charts": ["kpi_card", "bar_stacked", "line_trend", "data_table"] }
+  },
+  {
+    "id": 4,
+    "gorsel_dosyasi": "Dashboard Overview.png",
+    "kategori": "Satış Analitiği",
+    "akademik_prompt": "Organizasyonun genel satış performansını, dönemsel gelir trendlerini ve müşteri edinim kaynak dağılımını Model Context Protocol (MCP) standartlarına uygun bir JSON UI şeması olarak yapılandır.",
+    "json_ui_schema": { "layout_type": "analytical_overview", "charts": ["kpi_card", "bar_comparison", "pie_donut", "data_table"] }
+  },
+  {
+    "id": 5,
+    "gorsel_dosyasi": "Dashboard.png",
+    "kategori": "Performans Analizi",
+    "akademik_prompt": "Anlık operasyonel verileri, anahtar performans göstergelerini (KPI) ve süreç trendlerini tarayıcı tabanlı görselleştirme kütüphaneleriyle canlandıran deterministik bir analiz paneli şeması üret.",
+    "json_ui_schema": { "layout_type": "performance_grid", "charts": ["kpi_radial", "bar_ranking", "gauge_workload", "data_table"] }
+  }
+]

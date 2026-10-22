@@ -2,13 +2,14 @@ import Groq from 'groq-sdk';
 import { buildSystemPrompt } from './dashboardPrompt.js';
 
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY?.trim();
-const PRIMARY_MODEL = import.meta.env.VITE_GROQ_MODEL?.trim() || 'llama-3.3-70b-versatile';
+const PRIMARY_MODEL = import.meta.env.VITE_GROQ_MODEL?.trim() || 'groq/compound';
 
 const FALLBACK_MODELS = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-70b-versatile',
-  'llama-3.1-8b-instant',
-  'mixtral-8x7b-32768'
+  'groq/compound',
+  'groq/compound-mini',
+  'openai/gpt-oss-20b',
+  'openai/gpt-oss-120b',
+  'qwen/qwen3.6-27b'
 ];
 
 let groqClient = null;
@@ -26,50 +27,138 @@ export function isGroqConfigured() {
   return Boolean(GROQ_API_KEY);
 }
 
+function repairAndParseJson(str, isArray = false) {
+  if (!str || typeof str !== 'string') return null;
+
+  // 1. Clean reasoning tags like <think>...</think>
+  let cleaned = str.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // 2. Direct JSON parse
+  try {
+    const res = JSON.parse(cleaned);
+    if (res && typeof res === 'object') return res;
+  } catch (e) { }
+
+  // 3. Extract JSON code fences ```json ... ```
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      const res = JSON.parse(codeBlockMatch[1].trim());
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      cleaned = codeBlockMatch[1].trim();
+    }
+  }
+
+  // 4. Extract first {...} or [...] substring
+  const pattern = isArray ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
+  const match = cleaned.match(pattern);
+  if (match) {
+    try {
+      const res = JSON.parse(match[0].trim());
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      cleaned = match[0].trim();
+    }
+  }
+
+  // 5. Advanced bracket balancing repair
+  let repaired = cleaned.replace(/,\s*$/, '').replace(/,\s*"[^"]*":?\s*$/, '');
+  let quoteCount = 0;
+  let escaped = false;
+  for (let i = 0; i < repaired.length; i++) {
+    if (escaped) { escaped = false; continue; }
+    if (repaired[i] === '\\') { escaped = true; continue; }
+    if (repaired[i] === '"') quoteCount++;
+  }
+  if (quoteCount % 2 !== 0) repaired += '"';
+
+  const stack = [];
+  escaped = false;
+  let inStr = false;
+  for (let i = 0; i < repaired.length; i++) {
+    const char = repaired[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (char === '"') { inStr = !inStr; continue; }
+    if (!inStr) {
+      if (char === '{' || char === '[') stack.push(char);
+      else if (char === '}' && stack[stack.length - 1] === '{') stack.pop();
+      else if (char === ']' && stack[stack.length - 1] === '[') stack.pop();
+    }
+  }
+
+  let closing = '';
+  for (let i = stack.length - 1; i >= 0; i--) {
+    closing += stack[i] === '{' ? '}' : ']';
+  }
+
+  try {
+    const res = JSON.parse(repaired + closing);
+    if (res && typeof res === 'object') return res;
+  } catch (e1) {
+    const lastBrace = isArray ? repaired.lastIndexOf(']') : repaired.lastIndexOf('}');
+    if (lastBrace !== -1) {
+      let sub = repaired.slice(0, lastBrace + 1);
+      try {
+        const res = JSON.parse(sub);
+        if (res && typeof res === 'object') return res;
+      } catch (e2) { }
+    }
+  }
+
+  return null;
+}
+
 export async function generateDashboardConfig(metadataPrompt, userRequest, styleModifier = "") {
   if (!GROQ_API_KEY) {
     throw new Error('VITE_GROQ_API_KEY tanımlı değil');
   }
 
   const SYSTEM_PROMPT = buildSystemPrompt(styleModifier);
-
   const modelsToTry = [...new Set([PRIMARY_MODEL, ...FALLBACK_MODELS])];
   let lastError = null;
 
-  for (const modelName of modelsToTry) {
+  console.log(`🤖 [Groq Cascade Engine] Toplam ${modelsToTry.length} model sırayla deneniyor:`, modelsToTry.join(', '));
+
+  for (let idx = 0; idx < modelsToTry.length; idx++) {
+    const modelName = modelsToTry[idx];
+    console.log(`🚀 [Groq Model ${idx + 1}/${modelsToTry.length}] Deneniyor: ${modelName}`);
+
+    const client = getGroqClient();
+    const safeMetadata = metadataPrompt && metadataPrompt.length > 2000 ? metadataPrompt.slice(0, 2000) + "\n...[truncated]" : metadataPrompt;
+    
+    // Qwen model does not support json_object format parameter in Groq API
+    const supportsJsonFormat = !modelName.includes('qwen');
+
     try {
-      console.log(`🚀 [Groq] Deneniyor: ${modelName}`);
-      const client = getGroqClient();
       const response = await client.chat.completions.create({
         model: modelName,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `REQUEST: ${userRequest}\n\nMETADATA:\n${metadataPrompt}\n\nReturn a JSON object with at least 5 widgets. ONLY JSON.` }
+          { role: 'system', content: SYSTEM_PROMPT + "\nRespond ONLY with valid JSON." },
+          { role: 'user', content: `REQUEST: ${userRequest}\n\nMETADATA:\n${safeMetadata}\n\nReturn a JSON object with widgets.` }
         ],
-        temperature: 0.2,
+        temperature: 0.3,
         max_tokens: 4096,
-        response_format: { type: 'json_object' }
+        ...(supportsJsonFormat ? { response_format: { type: 'json_object' } } : {})
       });
 
       const text = response.choices?.[0]?.message?.content;
-      const jsonMatch = text?.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        console.log(`✅ [Groq] Başarılı: ${modelName}`);
-        return JSON.parse(jsonMatch[0].trim());
+      if (text) {
+        const parsed = repairAndParseJson(text, false);
+        if (parsed && typeof parsed === 'object') {
+          console.log(`✅ [Groq Model ${idx + 1}/${modelsToTry.length}] BAŞARILI: ${modelName}`);
+          return parsed;
+        }
       }
-      lastError = 'Boş yanıt';
+      console.warn(`⚠️ [Groq Model ${idx + 1}/${modelsToTry.length}] ${modelName} yanıt verdi fakat geçerli JSON oluşturulamadı. Sonraki modele geçiliyor...`);
     } catch (e) {
       lastError = e.message;
-      console.warn(`⚠️ [Groq] ${modelName} başarısız: ${lastError}`);
-
-      // If it's a rate limit error, maybe wait or just try next model
-      if (lastError.includes('429')) {
-        continue;
-      }
+      console.warn(`⚠️ [Groq Model ${idx + 1}/${modelsToTry.length}] ${modelName} başarısız (${lastError}). Sonraki modele geçiliyor...`);
     }
   }
 
-  throw new Error(`Tüm Groq modelleri meşgul: ${lastError}`);
+  throw new Error(`Tüm Groq modelleri denendi ancak yanıt alınamadı: ${lastError}`);
 }
 
 export async function generateMultipleDashboardConfigs(metadataPrompt, userRequest) {
@@ -124,27 +213,32 @@ export async function generateMultipleDashboardConfigs(metadataPrompt, userReque
   const models = [PRIMARY_MODEL, ...FALLBACK_MODELS];
   let lastError = null;
 
-  for (const model of models) {
+  for (let idx = 0; idx < models.length; idx++) {
+    const model = models[idx];
     try {
-      console.log(`⚡ [Groq Bulk] Deneniyor: ${model}`);
+      console.log(`⚡ [Groq Bulk ${idx + 1}/${models.length}] Deneniyor: ${model}`);
       const response = await client.chat.completions.create({
         model: model,
         messages: [
           { role: 'system', content: "You are a World-Class UI Architect. You output ONLY valid JSON arrays of dashboard objects." },
           { role: 'user', content: bulkPrompt }
         ],
-        temperature: 0.8, // Daha fazla yaratıcılık ve çeşitlilik için artırıldı
+        temperature: 0.7,
+        max_tokens: 8192
       });
 
       const text = response.choices?.[0]?.message?.content;
-      const jsonMatch = text?.match(/\[[\s\S]*\]/); // Array match
-      if (jsonMatch) {
-        console.log(`✅ [Groq Bulk] Başarılı: ${model}`);
-        return JSON.parse(jsonMatch[0].trim()).slice(0, 3);
+      if (text) {
+        const parsed = repairAndParseJson(text, true);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log(`✅ [Groq Bulk ${idx + 1}/${models.length}] BAŞARILI: ${model}`);
+          return parsed.slice(0, 3);
+        }
       }
+      console.warn(`⚠️ [Groq Bulk ${idx + 1}/${models.length}] ${model} dizi üretemedi. Sonraki modele geçiliyor...`);
     } catch (e) {
       lastError = e.message;
-      console.warn(`⚠️ [Groq Bulk] ${model} başarısız: ${lastError}`);
+      console.warn(`⚠️ [Groq Bulk ${idx + 1}/${models.length}] ${model} başarısız (${lastError}). Sonraki modele geçiliyor...`);
     }
   }
   throw new Error(`Groq Bulk üretim başarısız: ${lastError}`);
