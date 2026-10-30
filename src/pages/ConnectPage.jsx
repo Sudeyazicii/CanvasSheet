@@ -13,8 +13,9 @@ export default function ConnectPage() {
   const [sheetUrl, setSheetUrl] = useState('');
   const [rawText, setRawText] = useState('');
   const [activeTab, setActiveTab] = useState('sheet'); // 'sheet', 'file', 'text', 'mcp'
-  const [selectedDb, setSelectedDb] = useState(null);
-  const [mcpUrl, setMcpUrl] = useState('');
+  const [selectedDb, setSelectedDb] = useState('SQLite (REA)');
+  const [selectedTable, setSelectedTable] = useState('sales');
+  const [mcpUrl, setMcpUrl] = useState('http://localhost:3001/api/mcp/sqlite/data?table=sales');
   const [urlError, setUrlError] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -362,21 +363,22 @@ export default function ConnectPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   sessionStorage.setItem('guest_mode', 'true');
-                  sessionStorage.setItem('mcp_active_source', 'text');
+                  await DataHub.connect('mcp', { dbType: 'http://localhost:3001/api/mcp/sqlite/data?table=sales' });
                   navigate('/analyze');
                 }}
-                className="w-full py-3 bg-slate-800/60 hover:bg-slate-700/60 text-slate-300 font-semibold rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2 text-xs"
+                className="w-full py-3 bg-slate-800/60 hover:bg-slate-700/60 text-slate-300 font-semibold rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2 text-xs group"
               >
-                Giriş Yapmadan Misafir Olarak Keşfet
+                <span>Giriş Yapmadan Keşfet</span>
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Canlı SQLite</span>
               </button>
             </div>
           )}
         </div>
 
         {/* Step 2: Source Selection (Disabled until auth) */}
-        <div className={`glass-panel rounded-[32px] p-8 shadow-2xl transition-all duration-700 ${!isAuthenticated ? 'grayscale opacity-20 pointer-events-none scale-[0.98]' : 'animate-fadeIn'}`}>
+        <div className={`glass-panel rounded-[32px] p-8 shadow-2xl transition-all duration-700 animate-fadeIn`}>
            {/* Tabs */}
           <div className="flex gap-1.5 mb-8 bg-slate-900/50 p-1 rounded-2xl border border-white/5 overflow-x-auto">
               <button 
@@ -586,50 +588,117 @@ export default function ConnectPage() {
 
                {activeTab === 'mcp' && (
                 <div className="space-y-6">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Server size={20} className="text-blue-500" />
-                    <h3 className="font-bold text-white text-sm">MCP Database Bağlantısı</h3>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <Server size={20} className="text-blue-500" />
+                      <h3 className="font-bold text-white text-sm">MCP Database & REA Inspector</h3>
+                    </div>
+                    <span className="text-[10px] font-bold px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      REA Engine
+                    </span>
                   </div>
                   
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    {['MongoDB', 'PostgreSQL', 'BigQuery', 'Redis', 'Snowflake', 'MySQL'].map(db => (
+                  {/* Database Seçicileri */}
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {['SQLite (REA)', 'MongoDB', 'PostgreSQL', 'MySQL', 'Redis', 'Snowflake'].map(db => (
                       <button
                         key={db}
-                        onClick={() => setSelectedDb(db)}
-                        className={`p-3 rounded-xl border transition-all text-center ${selectedDb === db ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-900/50 border-slate-700/50 text-slate-400 hover:border-slate-500'}`}
+                        onClick={() => {
+                          setSelectedDb(db);
+                          if (db === 'SQLite (REA)') {
+                            setMcpUrl(`http://localhost:3001/api/mcp/sqlite/data?table=${selectedTable}`);
+                          } else if (db === 'MongoDB') {
+                            setMcpUrl('mongodb+srv://cluster0.example.com/mydb');
+                          } else if (db === 'PostgreSQL') {
+                            setMcpUrl('postgresql://postgres:password@localhost:5432/mydb');
+                          } else if (db === 'MySQL') {
+                            setMcpUrl('mysql://root:password@localhost:3306/mydb');
+                          } else {
+                            setMcpUrl('');
+                          }
+                        }}
+                        className={`p-3 rounded-xl border transition-all text-center relative ${
+                          selectedDb === db
+                            ? 'bg-blue-600 border-blue-500 text-white shadow-lg'
+                            : 'bg-slate-900/50 border-slate-700/50 text-slate-400 hover:border-slate-500'
+                        }`}
                       >
+                        {db === 'SQLite (REA)' && (
+                          <span className="absolute -top-1.5 -right-1 bg-emerald-500 text-slate-950 font-black text-[8px] px-1.5 py-0.5 rounded-full uppercase tracking-tighter">
+                            Önerilen
+                          </span>
+                        )}
                         <p className="font-bold text-[10px]">{db}</p>
                       </button>
                     ))}
                   </div>
 
+                  {/* SQLite İçin Tablo Seçici Çipleri (REA Inspector) */}
+                  {selectedDb === 'SQLite (REA)' && (
+                    <div className="space-y-2 bg-slate-900/40 p-3 rounded-2xl border border-slate-800">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">İncelenecek Tablo (REA Inspector)</span>
+                        <span className="text-[9px] text-blue-400 font-mono">node:sqlite</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { id: 'sales', label: '📊 Satışlar', desc: '15+ Satır / Ciro' },
+                          { id: 'customers', label: '👥 Müşteriler', desc: 'CRM & B2B' },
+                          { id: 'missions', label: '🚀 Uzay Filosu', desc: 'Canlı Filo' }
+                        ].map(t => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedTable(t.id);
+                              setMcpUrl(`http://localhost:3001/api/mcp/sqlite/data?table=${t.id}`);
+                            }}
+                            className={`p-2 rounded-xl text-left border transition-all ${
+                              selectedTable === t.id
+                                ? 'bg-blue-600/20 border-blue-500 text-white'
+                                : 'bg-slate-800/40 border-slate-700/40 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <div className="text-[10px] font-bold">{t.label}</div>
+                            <div className="text-[8px] text-slate-400">{t.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-4">
                     <div className="relative">
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-[10px] font-bold uppercase">URL</div>
+                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-[10px] font-bold uppercase font-mono">URI</div>
                       <input
                         type="text"
-                        placeholder="mongodb+srv://cluster0.example.com/..."
+                        placeholder="http://localhost:3001/api/mcp/sqlite/data?table=sales"
                         value={mcpUrl}
                         onChange={(e) => setMcpUrl(e.target.value)}
-                        className="w-full bg-slate-900/50 border border-slate-700/50 rounded-2xl py-4 pl-14 pr-4 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-slate-600"
+                        className="w-full bg-slate-900/50 border border-slate-700/50 rounded-2xl py-4 pl-14 pr-4 text-white text-xs font-mono focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-slate-600"
                       />
                     </div>
                     
                     <button
-                      onClick={() => handleMcpConnect(mcpUrl)}
-                      disabled={!selectedDb || !mcpUrl.trim() || isAnalyzing}
+                      onClick={() => handleMcpConnect(mcpUrl || selectedTable)}
+                      disabled={!selectedDb || isAnalyzing}
                       className={`w-full py-4 font-bold rounded-2xl transition-all flex items-center justify-center gap-3 ${
-                        selectedDb && mcpUrl.trim() 
-                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-xl shadow-blue-600/20' 
+                        selectedDb 
+                        ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white shadow-xl shadow-blue-600/20' 
                         : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       }`}
                     >
-                      {isAnalyzing ? "Bağlanıyor..." : "MCP Kaynağına Bağlan"}
+                      {isAnalyzing ? "Bağlanıyor..." : `REA MCP ile "${selectedDb === 'SQLite (REA)' ? selectedTable : selectedDb}" Bağlan`}
                     </button>
                   </div>
 
-                  <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-[10px] text-blue-300 font-medium leading-relaxed italic">
-                    * MCP (Model Context Protocol) üzerinden veritabanınıza canlı bağlantı kurulur. Bağlantı sağlandıktan sonra verileriniz otomatik olarak analiz edilecektir.
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-[10px] text-blue-300 font-medium leading-relaxed">
+                    <div className="flex items-center gap-1.5 font-bold mb-1 text-blue-200">
+                      <Sparkles size={13} className="text-blue-400" />
+                      morluto/rea SQLite & MCP Entegrasyonu
+                    </div>
+                    Bu modül, <strong>morluto/rea</strong> mantığıyla yerel SQLite (<code>DatabaseSync</code>) tablolarını şema ve satırlarıyla çözümler. Canlı sunucu için terminalde <code>npm run mcp</code> çalıştırabilirsiniz. (Sunucu kapalı olsa bile yerleşik zengin verisetiyle anında çalışır).
                   </div>
                 </div>
               )}

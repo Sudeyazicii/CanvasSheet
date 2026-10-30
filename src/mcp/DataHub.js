@@ -79,8 +79,8 @@ class DataHub {
     }
 
     if (!this.adapter) {
-      console.log('🔄 [DataHub] Otomatik varsayılan veriseti (Kaggle MCP) bağlanıyor...');
-      this.adapter = new McpDatabaseAdapter('kaggle');
+      console.log('🔄 [DataHub] Otomatik varsayılan REA SQLite veriseti bağlanıyor...');
+      this.adapter = new McpDatabaseAdapter('http://localhost:3001/api/mcp/sqlite/data?table=sales');
       this.activeSource = 'mcp';
     }
   }

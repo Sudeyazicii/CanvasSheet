@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoogleAuth } from '../auth/useGoogleAuth.js';
 import { analyzeSheet, formatMetadataForPrompt } from '../services/sheetAnalyzer.js';
@@ -139,8 +139,13 @@ export default function AnalyzePage() {
   // Tinder Deck States
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [swipeDirection, setSwipeDirection] = useState(null); // 'left' | 'right' | 'up' | null
-  const [rejectedCount, setRejectedCount] = useState(0);
+  const [rejectedIds, setRejectedIds] = useState([]);
   const [isListening, setIsListening] = useState(false);
+
+  // Exclude rejected cards permanently from deck rotations
+  const activeConfigs = useMemo(() => {
+    return uiConfigs.filter((c, i) => !rejectedIds.includes(c.id || c.title || `card-${i}`));
+  }, [uiConfigs, rejectedIds]);
 
   // Mascot assistant States
   const [mascotChat, setMascotChat] = useState("Selam! Ben NOVA. Verilerini en üst düzey tasarım standartlarında analiz ettim ve senin için 3 farklı PREMİUM konsept hazırladım. Hangisi senin vizyonuna daha yakın?");
@@ -195,7 +200,7 @@ export default function AnalyzePage() {
       setUiConfigs(matched);
       setSelectedIndex(0);
       setCurrentCardIndex(0);
-      setRejectedCount(0);
+      setRejectedIds([]);
       setIsLocked(false);
       setStep('analyzed'); // Kullanıcı önce Prompt sayfasını görür
       setMascotChat(`Hedef analizinizi girin, ardından 'Vizyon Konseptlerini İncele' butonuna tıklayarak Tinder kart destesine geçebilirsiniz.`);
@@ -383,7 +388,7 @@ export default function AnalyzePage() {
     }
     setWebrtcConnected(false);
     setExpertMessages([]);
-    setRejectedCount(0);
+    setRejectedIds([]);
     setCurrentCardIndex(0);
     
     const expertConfigCopy = JSON.parse(JSON.stringify(expertDashboardConfig));
@@ -470,12 +475,13 @@ export default function AnalyzePage() {
       
       const configs = await recommendKaggleLayouts(
         metadataPrompt,
-        userPrompt
+        userPrompt,
+        currentMetadata
       );
       setUiConfigs(configs);
       setSelectedIndex(0);
       setCurrentCardIndex(0);
-      setRejectedCount(0);
+      setRejectedIds([]);
       setIsLocked(false);
       setStep('complete');
       setMascotChat(`Promptunuza özel 3 vizyon konsepti Gemini ile oluşturuldu! Kartları Tinder gibi kaydırarak veya aşağıdaki butonlarla seçebilirsiniz.`);
@@ -484,7 +490,7 @@ export default function AnalyzePage() {
       setUiConfigs(canvasVisionTemplates);
       setSelectedIndex(0);
       setCurrentCardIndex(0);
-      setRejectedCount(0);
+      setRejectedIds([]);
       setIsLocked(false);
       setStep('complete');
     } finally {
@@ -662,41 +668,14 @@ export default function AnalyzePage() {
 
       const metadataPrompt = formatMetadataForPrompt(currentMetadata);
       
-      // 1. FAST LOCAL BIND: Show the exact layout immediately with data bound!
+      // Birebir Seçilen Vizyonu Canlı Verilerle Bağla (Gemini tasarımı bozmaz, vizyon 1:1 korunur)
       const fastBoundLayout = bindDatasetToTemplates([selectedLayout], metadataPrompt)[0] || selectedLayout;
       fastBoundLayout.image = selectedLayout.image;
       fastBoundLayout.category = selectedLayout.category;
       fastBoundLayout.id = selectedLayout.id;
       setActiveDashboard(fastBoundLayout);
-      setMascotChat(`Harika seçim! Seçtiğin "${selectedLayout.title}" vizyonu anında verilerinle oluşturuldu. Gemini arka planda metrikleri ve başlıkları optimize ediyor...`);
-
-      // 2. FAST BACKGROUND GEMINI: Refine layout with user prompt and dataset context
-      setRefining(true);
-      modifyDashboardWithGemini(
-        fastBoundLayout,
-        metadataPrompt,
-        prompt || `Bu ${selectedLayout.title} vizyonuna uygun verileri en şık şekilde öne çıkar.`
-      ).then(refinedConfig => {
-        if (refinedConfig && (refinedConfig.widgets || refinedConfig.title)) {
-          const finalMerged = {
-            ...selectedLayout,
-            ...refinedConfig,
-            image: selectedLayout.image,
-            category: selectedLayout.category,
-            id: selectedLayout.id
-          };
-          setRefinedConfigs(prev => ({
-            ...prev,
-            [index]: finalMerged
-          }));
-          setActiveDashboard(finalMerged);
-          setMascotChat(`İşte hazır! Seçtiğin ${selectedLayout.title} vizyonu Gemini ile başarıyla tamamlandı.`);
-        }
-      }).catch(err => {
-        console.warn("Gemini refinement completed with fallback:", err);
-      }).finally(() => {
-        setRefining(false);
-      });
+      setMascotChat(`Harika seçim! Seçtiğiniz "${selectedLayout.title}" vizyonu birebir canlı verilerinizle oluşturuldu. Değişiklik yapmak isterseniz bana söyleyebilirsiniz!`);
+      setRefining(false);
 
     } catch (err) {
       console.error("Dashboard bağlama hatası:", err);
@@ -896,12 +875,18 @@ export default function AnalyzePage() {
 
 
   const handleSwipeLeft = () => {
+    if (swipeDirection || activeConfigs.length === 0) return;
     setSwipeDirection('left');
-    setMascotChat("Bu tasarımı beğenmedin. Sıradaki vizyon konseptini inceliyoruz!");
+    setMascotChat("Bu vizyonu beğenmedin. Konsept elendi, sıradaki vizyon konseptini inceliyoruz!");
     setTimeout(() => {
-      const nextCount = rejectedCount + 1;
-      setRejectedCount(nextCount);
-      if (nextCount >= uiConfigs.length) {
+      const currentCard = activeConfigs[currentCardIndex];
+      const cardKey = currentCard ? (currentCard.id || currentCard.title || `card-${currentCardIndex}`) : `card-${currentCardIndex}`;
+      const nextRejectedIds = [...rejectedIds, cardKey];
+      setRejectedIds(nextRejectedIds);
+
+      const remainingConfigs = uiConfigs.filter((c, i) => !nextRejectedIds.includes(c.id || c.title || `card-${i}`));
+
+      if (remainingConfigs.length === 0) {
         setExpertRequested(true);
         setExpertStep('connecting');
         setMascotChat("Tasarım önerilerimizin hiçbirini beğenmediniz. Sizin için bir insan uzman (HITL) desteği talep ettim. Lütfen bekleyin...");
@@ -911,26 +896,32 @@ export default function AnalyzePage() {
           setMascotChat("Uzmanımız şu an verilerinizi inceliyor! Talep #2311-071 numarasıyla sıraya alındınız.");
         }, 2500);
       } else {
-        setCurrentCardIndex((prev) => (prev + 1) % uiConfigs.length);
+        setCurrentCardIndex((prev) => (prev >= remainingConfigs.length ? 0 : prev));
       }
       setSwipeDirection(null);
     }, 300);
   };
 
   const handleSwipeUp = () => {
+    if (swipeDirection || activeConfigs.length === 0) return;
     setSwipeDirection('up');
     setMascotChat("Bu tasarımı 'Belki' olarak not aldım. Diğer vizyon konseptlerini de inceleyelim!");
     setTimeout(() => {
-      setCurrentCardIndex((prev) => (prev + 1) % uiConfigs.length);
+      setCurrentCardIndex((prev) => (prev + 1) % activeConfigs.length);
       setSwipeDirection(null);
     }, 300);
   };
 
   const handleSwipeRight = () => {
+    if (swipeDirection || activeConfigs.length === 0) return;
     setSwipeDirection('right');
     setMascotChat("Harika! Bu tasarımı beğendin. Şimdi seçilen vizyonu gerçek verilerinle anında oluşturuyorum...");
     setTimeout(() => {
-      handleSelect(currentCardIndex);
+      const currentCard = activeConfigs[currentCardIndex];
+      const origIndex = currentCard 
+        ? uiConfigs.findIndex(c => (c.id || c.title) === (currentCard.id || currentCard.title))
+        : currentCardIndex;
+      handleSelect(origIndex !== -1 ? origIndex : currentCardIndex);
       setSwipeDirection(null);
     }, 300);
   };
@@ -1070,7 +1061,7 @@ export default function AnalyzePage() {
         <div className="max-w-[1600px] mx-auto px-6 pt-12 animate-fadeIn">
 
           {!isLocked ? (
-            rejectedCount >= uiConfigs.length ? (
+            (activeConfigs.length === 0 || expertRequested) ? (
               <div className="glass-panel w-full max-w-4xl mx-auto p-8 rounded-[32px] border-white/10 shadow-2xl space-y-6 animate-fadeIn">
                 <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-2">
                   <div className="flex items-center gap-3">
@@ -1165,7 +1156,7 @@ export default function AnalyzePage() {
                         </div>
                       ) : (
                         expertMessages.map((msg, idx) => (
-                          <div key={idx} className={`p-2.5 rounded-xl ${
+                          <div key={layout.id || `card-${idx}-${layout.title}`} className={`p-2.5 rounded-xl ${
                             msg.sender === 'Sistem' 
                             ? 'bg-white/5 text-slate-400 text-[10px] italic border border-white/5'
                             : msg.sender === 'Ahmet Yılmaz'
@@ -1193,11 +1184,7 @@ export default function AnalyzePage() {
                 <div className="flex gap-4 border-t border-white/5 pt-4 justify-end">
                   <button
                     onClick={() => {
-                      cleanupWebrtc();
-                      setRejectedCount(0);
-                      setCurrentCardIndex(0);
-                      setPrompt('');
-                      setStep('analyzed');
+                      cleanupWebrtc(); setRejectedIds([]); setExpertRequested(false); setCurrentCardIndex(0); setPrompt(''); setStep('analyzed');
                     }}
                     className="px-6 py-3 bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-400 hover:text-white font-bold rounded-2xl transition-all text-xs uppercase tracking-wider"
                   >
@@ -1206,10 +1193,7 @@ export default function AnalyzePage() {
 
                   <button
                     onClick={() => {
-                      cleanupWebrtc();
-                      setRejectedCount(0);
-                      setCurrentCardIndex(0);
-                      setIsLocked(false);
+                      cleanupWebrtc(); setRejectedIds([]); setExpertRequested(false); setCurrentCardIndex(0); setIsLocked(false);
                     }}
                     className="px-6 py-3 bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-400 hover:text-white font-bold rounded-2xl transition-all text-xs uppercase tracking-wider"
                   >
@@ -1229,8 +1213,8 @@ export default function AnalyzePage() {
 
                 {/* Stack Container */}
                 <div className="relative aspect-[4/5] w-full flex items-center justify-center">
-                  {uiConfigs.map((layout, idx) => {
-                    if (idx !== currentCardIndex && idx !== (currentCardIndex + 1) % uiConfigs.length) return null;
+                  {activeConfigs.map((layout, idx) => {
+                    if (idx !== currentCardIndex && idx !== (currentCardIndex + 1) % activeConfigs.length) return null;
                     
                     const isTop = idx === currentCardIndex;
                     
@@ -1299,7 +1283,7 @@ export default function AnalyzePage() {
                         {/* Info overlay */}
                         <div className="p-6 bg-slate-950/85 rounded-[32px] border border-white/5 space-y-2 relative z-45 backdrop-blur-md">
                           <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Öneri {idx + 1} / {uiConfigs.length}</span>
+                            <div className="flex items-center gap-2"><span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Öneri {idx + 1} / {activeConfigs.length}</span>{rejectedIds.length > 0 && <span className="text-[9px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full">{rejectedIds.length} Elendi</span>}</div>
                             <span className="text-[10px] text-slate-400 font-bold bg-white/5 px-2.5 py-0.5 rounded-full">{layout.category || "Dashboard"}</span>
                           </div>
                           <h3 className="text-xl font-black text-white uppercase leading-tight">{layout.title || "Stratejik Analiz"}</h3>
@@ -1318,7 +1302,7 @@ export default function AnalyzePage() {
                   <div className="flex flex-col items-center gap-2">
                     <button
                       onClick={handleSwipeLeft}
-                      disabled={refining}
+                      disabled={refining || !!swipeDirection}
                       className="w-16 h-16 bg-slate-900 hover:bg-rose-950/40 border-2 border-rose-500/30 hover:border-rose-500 text-rose-500 rounded-full flex items-center justify-center transition-all shadow-xl shadow-rose-950/20 active:scale-95 group"
                       title="Beğenmedim (Sola Kaydır)"
                     >
@@ -1331,7 +1315,7 @@ export default function AnalyzePage() {
                   <div className="flex flex-col items-center gap-2">
                     <button
                       onClick={handleSwipeUp}
-                      disabled={refining}
+                      disabled={refining || !!swipeDirection}
                       className="w-14 h-14 bg-slate-900 hover:bg-amber-950/40 border-2 border-amber-500/30 hover:border-amber-500 text-amber-500 rounded-full flex items-center justify-center transition-all shadow-lg shadow-amber-950/20 active:scale-95 group"
                       title="Belki (Yukarı Kaydır)"
                     >
@@ -1344,7 +1328,7 @@ export default function AnalyzePage() {
                   <div className="flex flex-col items-center gap-2">
                     <button
                       onClick={handleSwipeRight}
-                      disabled={refining}
+                      disabled={refining || !!swipeDirection}
                       className="w-16 h-16 bg-slate-900 hover:bg-emerald-950/40 border-2 border-emerald-500/30 hover:border-emerald-500 text-emerald-400 rounded-full flex items-center justify-center transition-all shadow-xl shadow-emerald-950/20 active:scale-95 group"
                       title="Beğendim! (Sağa Kaydır)"
                     >

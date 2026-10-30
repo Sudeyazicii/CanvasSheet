@@ -4,7 +4,7 @@ import DataHub from '../mcp/DataHub';
 import { Sparkles, Loader2, Info } from 'lucide-react';
 import { useGoogleAuth } from '../auth/useGoogleAuth';
 
-export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = false, metadata = null, viewMode = 'grid', activeRule = null }) {
+export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = false, metadata = null, initialData = null, viewMode = 'grid', activeRule = null }) {
   const auth = useGoogleAuth();
   const accessToken = auth?.accessToken;
   const [sheetData, setSheetData] = useState({});
@@ -34,6 +34,18 @@ export default function DynamicDashboard({ uiConfig, spreadsheetId, mockMode = f
 
   useEffect(() => {
     async function loadData() {
+      if (initialData && Array.isArray(initialData) && initialData.length > 0) {
+        const filteredData = initialData.filter((row, idx) => idx === 0 || row.some(cell => cell && cell.toString().trim() !== ''));
+        const dataMap = {};
+        dataRequests.forEach(req => {
+          const range = req.range.includes('!') ? req.range : `${req.sheetName}${req.sheetName ? '!' : ''}${req.range}`;
+          dataMap[range] = filteredData;
+        });
+        setSheetData(dataMap);
+        setLoading(false);
+        return;
+      }
+
       if (mockMode) {
         const mockDataMap = {};
         if (metadata && metadata.columnStats) {

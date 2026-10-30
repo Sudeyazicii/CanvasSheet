@@ -44,6 +44,9 @@ Canvas Sheet, Google Sheets, Excel veya CSV verilerinizi saniyeler içinde benze
 - 🔀 **Çoklu Veri Birleştirme (Multi-Source Merge)**
   Farklı kaynaklardan gelen (CSV veya Excel) iki ayrı veri setini, ilk sütunlarındaki ortak anahtarlar (Join Key) üzerinden eşleştirerek tarayıcı üzerinde dinamik olarak birleştirebilirsiniz.
 
+- 🔌 **REA SQLite & MCP Canlı Veritabanı Entegrasyonu**
+  [morluto/rea](https://github.com/morluto/rea) mimarisinden ilham alan yerel SQLite motoru (node:sqlite DatabaseSync) ile .db / SQLite veritabanları şemalarıyla analiz edilir ve npm run mcp sunucusu üzerinden anında dinamik dashboarda dönüştürülür.
+
 - 📂 **GitHub Store (Live & Demo Modu)**
   Güncel veri setinizi doğrudan GitHub reposuna commit edin! Hackathon sunumları için PAT şifrenizi girmeden çalıştırabileceğiniz **"Simüle Et (Demo)"** butonu ile güvenli ve kusursuz bir entegrasyon demosu sunabilirsiniz.
 
